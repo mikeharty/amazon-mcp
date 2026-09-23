@@ -6,10 +6,10 @@ The initial adapter supports Amazon.com (`domain=1`) only:
 
 - Product price history uses `/product`, `history=1`, a bounded `days` value, and `update=-1`. It does not request offers, ratings, Buy Box data, or another paid option. Keepa documents a base cost of one token per found/requested product, with a missing ASIN costing zero when `update=-1`.
 - Seller information uses `/seller` with `storefront=0`, costing at most one token per requested seller. It does not request the nine-token storefront option.
-- Calls are serialized per provider instance. Batches default to 10 identifiers and can never exceed Keepa's documented 100-item endpoint limit. A response with no remaining tokens blocks another call until its reported refill window.
+- Calls are serialized per provider instance. Batches default to 10 identifiers and can never exceed Keepa's documented 100-item endpoint limit. A provider instance defaults to at most 100 calls and 100 reported/estimated tokens; both caps are configurable. The response's actual `tokensConsumed` is authoritative and can only be known after the first call completes. A response with no remaining tokens blocks another call until its reported refill window.
 - Responses are capped at 5 MiB by default and decoded to a small allowlisted shape. No raw provider payload is returned.
 
-Every successful result is marked `partial`. Keepa price history reflects Keepa observations and can contain gaps; seller data can be stale or unavailable. It is enrichment, not authoritative current Amazon account, offer, delivery, or transaction state.
+Every successful result is marked `partial`. Price series state USD and `shippingIncluded: false`; this adapter intentionally omits the higher-cost shipping-aware offer series. Keepa price history reflects Keepa observations and can contain gaps; seller data can be stale or unavailable. It is enrichment, not authoritative current Amazon account, offer, delivery, or transaction state.
 
 Official references checked 2026-09-22:
 

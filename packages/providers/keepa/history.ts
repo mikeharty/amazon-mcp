@@ -30,6 +30,7 @@ export function decodePriceHistory(history: unknown): PricePoint[] {
     if (!Number.isSafeInteger(keepaMinutes) || !Number.isSafeInteger(amountMinor)) {
       throw new TypeError('Invalid Keepa price history point');
     }
+    if (amountMinor < -1) throw new TypeError('Unknown Keepa price sentinel');
     points.push({
       observedAt: new Date(keepaTimeToUnixMilliseconds(keepaMinutes)).toISOString(),
       amountMinor: amountMinor === -1 ? null : amountMinor,

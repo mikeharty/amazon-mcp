@@ -56,10 +56,14 @@ describe('Keepa provider', () => {
         marketplace: 'amazon.com',
         requestedDays: 90,
         histories: expect.objectContaining({
-          amazon: [
-            { observedAt: '2011-01-01T00:00:00.000Z', amountMinor: 2999 },
-            { observedAt: '2011-01-01T00:01:00.000Z', amountMinor: null },
-          ],
+          amazon: {
+            currency: 'USD',
+            shippingIncluded: false,
+            points: [
+              { observedAt: '2011-01-01T00:00:00.000Z', amountMinor: 2999 },
+              { observedAt: '2011-01-01T00:01:00.000Z', amountMinor: null },
+            ],
+          },
         }),
       }),
     );
@@ -150,6 +154,53 @@ describe('Keepa provider', () => {
     await provider.productHistory({ asins: ['B00M0QVG3W'] });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
+
+  it('rejects unexpected returned ASINs and enforces a local session budget', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      jsonResponse({
+        tokensLeft: 10,
+        tokensConsumed: 1,
+        refillRate: 1,
+        refillIn: 5_000,
+        products: [{ asin: 'B0F3GWXLTS', csv: [] }],
+      }),
+    );
+    const provider = createKeepaProvider({
+      apiKey: 'private-key',
+      fetch,
+      maxCallsPerSession: 1,
+      maxTokensPerSession: 1,
+    });
+
+    const mismatched = await provider.productHistory({ asins: ['B00M0QVG3W'] });
+    expect(mismatched).toEqual(expect.objectContaining({ status: 'failed', error: { code: 'provider_error' } }));
+
+    const overBudget = await provider.productHistory({ asins: ['B00M0QVG3W'] });
+    expect(overBudget).toEqual(
+      expect.objectContaining({ status: 'failed', error: { code: 'session_budget_exhausted' } }),
+    );
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it('rejects duplicate products even when the response count matches the request count', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      jsonResponse({
+        tokensLeft: 8,
+        tokensConsumed: 2,
+        refillRate: 1,
+        refillIn: 5_000,
+        products: [
+          { asin: 'B00M0QVG3W', csv: [] },
+          { asin: 'B00M0QVG3W', csv: [] },
+        ],
+      }),
+    );
+    const provider = createKeepaProvider({ apiKey: 'private-key', fetch });
+
+    const result = await provider.productHistory({ asins: ['B00M0QVG3W', 'B0F3GWXLTS'] });
+
+    expect(result).toEqual(expect.objectContaining({ status: 'failed', error: { code: 'provider_error' } }));
+  });
 });
 
 describe('Keepa history decoder', () => {
@@ -164,6 +215,7 @@ describe('Keepa history decoder', () => {
   it('rejects malformed history instead of returning shifted observations', () => {
     expect(() => decodePriceHistory([0, 1234, 60])).toThrow('Invalid Keepa price history');
     expect(() => decodePriceHistory([0, 12.34])).toThrow('Invalid Keepa price history point');
+    expect(() => decodePriceHistory([0, -2])).toThrow('Unknown Keepa price sentinel');
   });
 });
 

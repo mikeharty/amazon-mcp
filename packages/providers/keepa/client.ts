@@ -13,7 +13,7 @@ export type KeepaTokenState = Readonly<{
 }>;
 
 export type KeepaError = Readonly<{
-  code: 'keepa_not_configured' | 'invalid_request' | 'rate_limited' | 'provider_error';
+  code: 'keepa_not_configured' | 'invalid_request' | 'rate_limited' | 'session_budget_exhausted' | 'provider_error';
   retryAt?: string;
 }>;
 
@@ -33,11 +33,17 @@ export type ProductPriceHistory = Readonly<{
   sourceUpdatedAt?: string;
   requestedDays: number;
   histories: Readonly<{
-    amazon: readonly PricePoint[];
-    marketplaceNew: readonly PricePoint[];
-    marketplaceUsed: readonly PricePoint[];
-    listPrice: readonly PricePoint[];
+    amazon: PriceSeries;
+    marketplaceNew: PriceSeries;
+    marketplaceUsed: PriceSeries;
+    listPrice: PriceSeries;
   }>;
+}>;
+
+export type PriceSeries = Readonly<{
+  currency: 'USD';
+  shippingIncluded: false;
+  points: readonly PricePoint[];
 }>;
 
 export type KeepaSeller = Readonly<{
@@ -64,6 +70,8 @@ export type KeepaProviderOptions = Readonly<{
   fetch?: typeof globalThis.fetch;
   baseUrl?: string;
   maxItemsPerRequest?: number;
+  maxCallsPerSession?: number;
+  maxTokensPerSession?: number;
   maxResponseBytes?: number;
   timeoutMs?: number;
   now?: () => number;
@@ -77,6 +85,8 @@ export function createKeepaProvider(options: KeepaProviderOptions = {}): KeepaPr
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const baseUrl = validatedBaseUrl(options.baseUrl ?? DEFAULT_BASE_URL);
   const maxItems = boundedInteger(options.maxItemsPerRequest ?? DEFAULT_MAX_ITEMS, 1, 100, 'maxItemsPerRequest');
+  const maxCalls = boundedInteger(options.maxCallsPerSession ?? 100, 1, 10_000, 'maxCallsPerSession');
+  const maxTokens = boundedInteger(options.maxTokensPerSession ?? 100, 1, 100_000, 'maxTokensPerSession');
   const maxResponseBytes = boundedInteger(
     options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
     1,
@@ -86,13 +96,23 @@ export function createKeepaProvider(options: KeepaProviderOptions = {}): KeepaPr
   const timeoutMs = boundedInteger(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, 1, 60_000, 'timeoutMs');
   const now = options.now ?? Date.now;
   let blockedUntil = 0;
+  let callsStarted = 0;
+  let tokensConsumed = 0;
   let queue: Promise<void> = Promise.resolve();
 
-  async function request(endpoint: 'product' | 'seller', params: URLSearchParams): Promise<KeepaResult<unknown>> {
+  async function request(
+    endpoint: 'product' | 'seller',
+    params: URLSearchParams,
+    estimatedTokens: number,
+  ): Promise<KeepaResult<unknown>> {
     const operation = async (): Promise<KeepaResult<unknown>> => {
+      if (callsStarted >= maxCalls || tokensConsumed + estimatedTokens > maxTokens) {
+        return failure('session_budget_exhausted', 'The configured Keepa session budget is exhausted');
+      }
       if (now() < blockedUntil) {
         return failure('rate_limited', 'Keepa token bucket has not refilled', new Date(blockedUntil).toISOString());
       }
+      callsStarted += 1;
 
       const url = new URL(endpoint, baseUrl);
       params.set('key', configuredApiKey);
@@ -109,6 +129,7 @@ export function createKeepaProvider(options: KeepaProviderOptions = {}): KeepaPr
         });
         const payload = await readBoundedJson(response, maxResponseBytes);
         const tokens = readTokenState(payload);
+        tokensConsumed += Math.max(0, tokens.tokensConsumed ?? 0);
         if (tokens.tokensLeft !== undefined && tokens.tokensLeft <= 0 && tokens.refillInMs !== undefined) {
           blockedUntil = now() + Math.max(0, tokens.refillInMs);
         }
@@ -153,13 +174,26 @@ export function createKeepaProvider(options: KeepaProviderOptions = {}): KeepaPr
           days: String(validDays),
           update: '-1',
         }),
+        validAsins.values.length,
       );
       if (response.status !== 'ok') return response as KeepaResult<readonly ProductPriceHistory[]>;
 
       try {
         const payload = asRecord(response.data);
         const products = Array.isArray(payload.products) ? payload.products : [];
-        const decoded = products.map((product) => decodeProduct(product, validDays));
+        const requestedAsins = new Set(validAsins.values);
+        const productsByAsin = new Map<string, ProductPriceHistory>();
+        for (const product of products) {
+          const decodedProduct = decodeProduct(product, validDays);
+          if (!requestedAsins.has(decodedProduct.asin) || productsByAsin.has(decodedProduct.asin)) {
+            throw new TypeError('Unexpected or duplicate ASIN in Keepa response');
+          }
+          productsByAsin.set(decodedProduct.asin, decodedProduct);
+        }
+        const decoded = validAsins.values.flatMap((asin) => {
+          const product = productsByAsin.get(asin);
+          return product ? [product] : [];
+        });
         return {
           ...response,
           status: 'partial',
@@ -182,6 +216,7 @@ export function createKeepaProvider(options: KeepaProviderOptions = {}): KeepaPr
       const response = await request(
         'seller',
         new URLSearchParams({ domain: '1', seller: validIds.values.join(','), storefront: '0' }),
+        validIds.values.length,
       );
       if (response.status !== 'ok') return response as KeepaResult<readonly KeepaSeller[]>;
 
@@ -237,11 +272,19 @@ function decodeProduct(value: unknown, requestedDays: number): ProductPriceHisto
     sourceUpdatedAt: optionalKeepaTime(product.lastUpdate),
     requestedDays,
     histories: {
-      amazon: decodePriceHistory(csv[KEEPA_PRICE_HISTORY_INDEX.amazon]),
-      marketplaceNew: decodePriceHistory(csv[KEEPA_PRICE_HISTORY_INDEX.marketplaceNew]),
-      marketplaceUsed: decodePriceHistory(csv[KEEPA_PRICE_HISTORY_INDEX.marketplaceUsed]),
-      listPrice: decodePriceHistory(csv[KEEPA_PRICE_HISTORY_INDEX.listPrice]),
+      amazon: priceSeries(csv[KEEPA_PRICE_HISTORY_INDEX.amazon]),
+      marketplaceNew: priceSeries(csv[KEEPA_PRICE_HISTORY_INDEX.marketplaceNew]),
+      marketplaceUsed: priceSeries(csv[KEEPA_PRICE_HISTORY_INDEX.marketplaceUsed]),
+      listPrice: priceSeries(csv[KEEPA_PRICE_HISTORY_INDEX.listPrice]),
     },
+  };
+}
+
+function priceSeries(history: unknown): PriceSeries {
+  return {
+    currency: 'USD',
+    shippingIncluded: false,
+    points: decodePriceHistory(history),
   };
 }
 
