@@ -135,6 +135,7 @@ describe("Amazon web provider synthetic fixture E2E", () => {
       sellerId: "A1FIXTURE",
       name: "Fixture Seller",
     });
+    expect((seller.data as any).feedbackPeriods[0].count).toBe(120);
     const feedback = await provider.read(
       "seller_feedback_list",
       { sellerId: "A1FIXTURE" },
@@ -249,6 +250,119 @@ describe("Amazon web provider synthetic fixture E2E", () => {
       status: "conflict",
       error: { code: "wrong_seller" },
     });
+  });
+
+  it("refuses incomplete selected cart lines before dispatching any effect", async () => {
+    const variants = [
+      {
+        name: "seller",
+        alter: (html: string) =>
+          html.replace(' data-seller-id="A1FIXTURE"', ""),
+      },
+      {
+        name: "quantity",
+        alter: (html: string) =>
+          html.replace(/<select name="quantity">.*?<\/select>/, ""),
+      },
+      {
+        name: "mode",
+        alter: (html: string) =>
+          html.replace(' data-purchase-mode="one_time"', ""),
+      },
+    ];
+    for (const variant of variants) {
+      const incompleteContext = await browser.newContext();
+      const incompletePage = await incompleteContext.newPage();
+      await incompleteContext.route("**/*", async (route) => {
+        const url = new URL(route.request().url());
+        if (
+          url.hostname !== "www.amazon.com" ||
+          !url.pathname.includes("/cart/")
+        )
+          return route.abort("blockedbyclient");
+        let body = variant.alter(
+          await readFile(join(fixtures, "cart.html"), "utf8"),
+        );
+        body = body.replace(
+          "this.closest('.sc-list-item').remove()",
+          "window.__effects=(window.__effects||0)+1",
+        );
+        return route.fulfill({ status: 200, contentType: "text/html", body });
+      });
+      const incompleteProvider = new AmazonWebProvider({
+        run: (fn) => fn(incompletePage),
+        close: async () => {},
+      });
+      const snapshot = await incompleteProvider.read("cart_get", {}, ctx);
+      expect(snapshot, variant.name).toMatchObject({
+        status: "partial",
+        coverage: {
+          missing: expect.arrayContaining(["required:cart_line_identity"]),
+        },
+      });
+      const result = await incompleteProvider.mutate(
+        "cart_remove",
+        {
+          lineRef: "cart-line-1",
+          expectedRevision: (snapshot.data as any).revision,
+        },
+        ctx,
+      );
+      expect(result, variant.name).toMatchObject({
+        status: "unsupported",
+        error: { code: "cart_line_evidence_incomplete" },
+      });
+      expect(
+        await incompletePage.evaluate(() => (window as any).__effects ?? 0),
+        variant.name,
+      ).toBe(0);
+      await incompleteContext.close();
+    }
+  });
+
+  it("refuses cart add when matching baseline quantity is not observed", async () => {
+    let productRequests = 0;
+    const incompleteContext = await browser.newContext();
+    const incompletePage = await incompleteContext.newPage();
+    await incompleteContext.route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.hostname !== "www.amazon.com")
+        return route.abort("blockedbyclient");
+      if (url.pathname.startsWith("/dp/")) {
+        productRequests += 1;
+        return routeFixture(route);
+      }
+      if (url.pathname.includes("/cart/")) {
+        const body = (
+          await readFile(join(fixtures, "cart.html"), "utf8")
+        ).replace(/<select name="quantity">.*?<\/select>/, "");
+        return route.fulfill({ status: 200, contentType: "text/html", body });
+      }
+      return route.abort("blockedbyclient");
+    });
+    const incompleteProvider = new AmazonWebProvider({
+      run: (fn) => fn(incompletePage),
+      close: async () => {},
+    });
+    const snapshot = await incompleteProvider.read("cart_get", {}, ctx);
+    const result = await incompleteProvider.mutate(
+      "cart_add",
+      {
+        asin: "B0FIXTURE1",
+        quantity: 1,
+        expectedRevision: (snapshot.data as any).revision,
+        expectedSellerId: "A1FIXTURE",
+        expectedCondition: "New",
+        purchaseMode: "one_time",
+      },
+      ctx,
+    );
+    expect(result).toMatchObject({
+      status: "unsupported",
+      error: { code: "cart_line_evidence_incomplete" },
+    });
+    expect(productRequests).toBe(0);
+    await incompleteContext.close();
   });
 
   it("verifies reversible cart quantity/removal and quarantines an unverifiable add", async () => {

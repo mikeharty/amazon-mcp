@@ -73,14 +73,16 @@ export async function extractSeller(page: Page) {
     .evaluateAll((rows) =>
       rows.map((row) => {
         const root = row as HTMLElement;
+        const countText =
+          root.querySelector("[data-feedback-count], .feedback-count")
+            ?.textContent ??
+          root.textContent?.match(/([\d,]+)\s*(?:ratings?|total)\b/i)?.[1];
         return {
           period:
             root.dataset.feedbackSummaryPeriod ||
             root.querySelector("th, td")?.textContent?.trim(),
           positivePercent: root.textContent?.match(/(\d+(?:\.\d+)?)%/)?.[1],
-          count: root.textContent?.match(
-            /(?:\(|\b)([\d,]+)\s*(?:ratings?|total)?\)?/i,
-          )?.[1],
+          count: countText ? Number(countText.replace(/,/g, "")) : undefined,
         };
       }),
     );

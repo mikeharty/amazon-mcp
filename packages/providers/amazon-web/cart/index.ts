@@ -14,7 +14,7 @@ export async function extractCart(page: Page) {
       '.sc-list-item[data-asin], [data-name="Active Items"] [data-asin], [data-name="Saved Items"] [data-asin]',
     )
     .evaluateAll((nodes) =>
-      nodes.map((node, index) => {
+      nodes.map((node) => {
         const root = node as HTMLElement;
         const text = (selector: string) =>
           root.querySelector(selector)?.textContent?.trim() || undefined;
@@ -24,12 +24,20 @@ export async function extractCart(page: Page) {
           root.querySelector<HTMLInputElement>('input[name*="quantity"]')
             ?.value ??
           text(".a-dropdown-prompt");
+        const purchaseModeElement = root.querySelector<HTMLElement>(
+          '[data-purchase-mode][aria-checked="true"], [data-purchase-mode].selected',
+        );
+        const purchaseMode =
+          root.dataset.purchaseMode ||
+          purchaseModeElement?.dataset.purchaseMode;
         return {
-          lineRef:
-            root.dataset.itemid || root.dataset.itemId || `line-${index + 1}`,
+          lineRef: root.dataset.itemid || root.dataset.itemId || undefined,
           asin: root.dataset.asin || undefined,
           title: text(".sc-product-title, .a-truncate-cut"),
-          quantity: Number(quantity || 1),
+          quantity:
+            quantity && /^\d+$/.test(quantity.trim())
+              ? Number(quantity)
+              : undefined,
           selected: root.querySelector<HTMLInputElement>(
             'input[type="checkbox"]',
           )?.checked,
@@ -45,9 +53,10 @@ export async function extractCart(page: Page) {
             '.sc-product-condition, [data-feature-id="sc-product-condition"]',
           ),
           priceText: text(".sc-product-price, .a-price .a-offscreen"),
-          purchaseMode: /subscribe/i.test(root.textContent || "")
-            ? "subscription"
-            : "one_time",
+          purchaseMode:
+            purchaseMode === "one_time" || purchaseMode === "subscription"
+              ? purchaseMode
+              : undefined,
           location: root.closest('[data-name="Saved Items"], #sc-saved-cart')
             ? "saved"
             : "active",

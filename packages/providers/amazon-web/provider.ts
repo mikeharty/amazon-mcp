@@ -257,6 +257,14 @@ export class AmazonWebProvider implements ShoppingProvider {
             error: { code: "stale_cart", retryable: true },
           };
         const lineRef = safeLineRef(terms.lineRef);
+        const prior = before.lines.find((line) => line.lineRef === lineRef);
+        if (!prior)
+          return {
+            status: "conflict",
+            data: before,
+            error: { code: "cart_line_not_found", retryable: false },
+          };
+        if (!completeCartIdentity(prior)) return incompleteCartLine(prior);
         const row = page
           .locator(
             `[data-itemid=${JSON.stringify(lineRef)}], [data-item-id=${JSON.stringify(lineRef)}]`,
@@ -331,7 +339,7 @@ export class AmazonWebProvider implements ShoppingProvider {
     context: ProviderContext,
   ): Promise<Result> {
     const asin = requiredAsin(terms);
-    const quantity = boundedQuantity(terms.quantity ?? 1);
+    const quantity = boundedQuantity(terms.quantity);
     const expectedRevision = requiredString(terms, "expectedRevision", 64);
     const expectedSellerId = requiredSellerId({
       sellerId: terms.expectedSellerId,
@@ -357,6 +365,13 @@ export class AmazonWebProvider implements ShoppingProvider {
         data: before,
         error: { code: "stale_cart", retryable: true },
       };
+    const incompleteSameAsin = before.lines.find(
+      (line) =>
+        line.location === "active" &&
+        line.asin === asin &&
+        !completeCartIdentity(line),
+    );
+    if (incompleteSameAsin) return incompleteCartLine(incompleteSameAsin);
     await gotoAndCheck(page, `https://www.amazon.com/dp/${asin}`);
     const product = await extractProduct(page);
     if (product.asin !== asin)
@@ -430,12 +445,25 @@ export class AmazonWebProvider implements ShoppingProvider {
         normalizeText(line.condition) === normalizeText(expectedCondition) &&
         line.purchaseMode === purchaseMode;
       if (!cart.recognized) return unknown("cart_add", cart);
-      const beforeQuantity = before.lines
-        .filter((line) => line.location === "active" && matches(line))
-        .reduce((sum, line) => sum + line.quantity, 0);
-      const afterQuantity = cart.lines
-        .filter((line) => line.location === "active" && matches(line))
-        .reduce((sum, line) => sum + line.quantity, 0);
+      const beforeMatches = before.lines.filter(
+        (line) => line.location === "active" && matches(line),
+      );
+      const afterMatches = cart.lines.filter(
+        (line) => line.location === "active" && matches(line),
+      );
+      if (
+        beforeMatches.some((line) => !completeCartIdentity(line)) ||
+        afterMatches.some((line) => !completeCartIdentity(line))
+      )
+        return unknown("cart_add", cart);
+      const beforeQuantity = beforeMatches.reduce(
+        (sum, line) => sum + line.quantity!,
+        0,
+      );
+      const afterQuantity = afterMatches.reduce(
+        (sum, line) => sum + line.quantity!,
+        0,
+      );
       if (afterQuantity - beforeQuantity !== quantity)
         return unknown("cart_add", cart);
       return observed(cart, context);
@@ -652,12 +680,14 @@ function completeCartIdentity(
   line: Awaited<ReturnType<typeof extractCart>>["lines"][number],
 ): boolean {
   return Boolean(
+    line.lineRef &&
     line.asin &&
     line.sellerId &&
     line.condition &&
     line.purchaseMode &&
     line.location &&
-    Number.isInteger(line.quantity),
+    Number.isInteger(line.quantity) &&
+    line.quantity! > 0,
   );
 }
 function sameCartIdentity(
@@ -704,6 +734,28 @@ function unrecognizedCart(): Result {
       reason: "The visible page was not recognized as an Amazon cart",
     },
     error: { code: "cart_layout_unrecognized", retryable: false },
+  };
+}
+function incompleteCartLine(
+  line: Awaited<ReturnType<typeof extractCart>>["lines"][number],
+): Result {
+  const missing = [
+    !line.lineRef && "lineRef",
+    !line.asin && "asin",
+    !line.sellerId && "sellerId",
+    !line.condition && "condition",
+    !Number.isInteger(line.quantity) && "quantity",
+    !line.purchaseMode && "purchaseMode",
+    !line.location && "location",
+  ].filter(Boolean);
+  return {
+    status: "unsupported",
+    coverage: {
+      complete: false,
+      missing: missing.map((field) => `required:cart_line_${field}`),
+      reason: "The selected cart line lacks complete visible identity evidence",
+    },
+    error: { code: "cart_line_evidence_incomplete", retryable: false },
   };
 }
 function staleSession(actualGeneration: number): Result {
@@ -827,6 +879,14 @@ function missingCoverage(kind: string, data: any): string[] {
     missing.push("required:seller_identity");
   if (kind === "cart_get" && !data.recognized)
     missing.push("required:cart_marker");
+  if (
+    kind === "cart_get" &&
+    data.lines?.some(
+      (line: Awaited<ReturnType<typeof extractCart>>["lines"][number]) =>
+        !completeCartIdentity(line),
+    )
+  )
+    missing.push("required:cart_line_identity");
   if (kind === "orders_list" && !data.recognized)
     missing.push("required:orders_marker");
   if (kind === "orders_get" && !data.found)
