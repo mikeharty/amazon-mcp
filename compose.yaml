@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: amazon_mcp
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: amazon_mcp
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - amazon-mcp-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U amazon_mcp"]
+      interval: 5s
+      retries: 10
+volumes:
+  amazon-mcp-db:

@@ -3,17 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.18.0" },
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "packageManager": "pnpm@10.32.1",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "verify": "pnpm typecheck && pnpm test && pnpm build",
-    "dev": "tsx apps/gateway/main.ts",
-    "worker": "tsx apps/worker/main.ts",
-    "migrate": "tsx scripts/migrate.ts",
-    "browser:login": "tsx scripts/browser-login.ts"
+    "dev": "node --env-file=.env --import tsx apps/gateway/main.ts",
+    "worker": "node --env-file=.env --import tsx apps/worker/main.ts",
+    "migrate": "node --env-file=.env --import tsx scripts/migrate.ts",
+    "browser:login": "tsx scripts/browser-login.ts",
+    "local:init": "tsx scripts/setup.ts",
+    "mcp:smoke": "node --env-file=.env --import tsx scripts/mcp-smoke.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",

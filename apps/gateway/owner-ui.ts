@@ -1,0 +1,44 @@
+import { randomBytes } from 'node:crypto';
+import { Store } from '../../packages/store/index.js';
+import { secureEqual } from '../../packages/store/crypto.js';
+import { DomainError } from '../../packages/contracts/index.js';
+type Session={csrf:string;expires:number};
+const escape=(v:unknown)=>String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
+const page=(body:string)=>`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Amazon MCP owner control</title><style>body{font:1rem/1.6 system-ui;max-width:52rem;margin:3rem auto;padding:1rem;color:#17202a;background:#fafafa}input,button{font:inherit;padding:.75rem;min-height:48px}label{display:block;margin-top:1rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#eee;padding:1rem}a{color:#0645ad}:focus-visible{outline:3px solid #0366d6}button{cursor:pointer}</style><main>${body}</main></html>`;
+function html(body:string,status=200,extra:Record<string,string>={}):Response{return new Response(page(body),{status,headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",'referrer-policy':'no-referrer','x-content-type-options':'nosniff',...extra}});}
+export function createOwnerUi(store:Store,config:{ownerId:string;ownerToken:string;origin:string}) {
+ const sessions=new Map<string,Session>();const attempts=new Map<string,{count:number;since:number}>();
+ return async (request:Request):Promise<Response>=>{
+  const url=new URL(request.url);if(url.origin!==config.origin)return html('Invalid host',403);
+  if(request.method==='POST'&&request.headers.get('origin')!==config.origin)return html('Origin check failed',403);
+  if(!['GET','POST'].includes(request.method))return html('Method not allowed',405);
+  const raw=request.headers.get('cookie')?.split(';').map(s=>s.trim()).find(s=>s.startsWith('owner_session='))?.slice(14);
+  let session=raw?sessions.get(raw):undefined;if(session&&session.expires<Date.now()){sessions.delete(raw!);session=undefined;}
+  for(const [id,s] of sessions)if(s.expires<Date.now())sessions.delete(id);
+  if(url.pathname==='/owner/login'&&request.method==='POST'){
+   const key='local';const a=attempts.get(key);if(a&&a.since>Date.now()-60000&&a.count>=5)return html('Too many attempts. Try again in one minute.',429);
+   if(Number(request.headers.get('content-length')??0)>4096)return html('Request too large',413);
+   const body=await request.text();if(body.length>4096)return html('Request too large',413);const form=new URLSearchParams(body);
+   if(!secureEqual(form.get('token')??'',config.ownerToken)){attempts.set(key,{count:a&&a.since>Date.now()-60000?a.count+1:1,since:a&&a.since>Date.now()-60000?a.since:Date.now()});return html('Owner sign-in failed',401);}
+   attempts.delete(key);const id=randomBytes(32).toString('hex');sessions.set(id,{csrf:randomBytes(32).toString('hex'),expires:Date.now()+900000});
+   return new Response(null,{status:303,headers:{location:'/owner','set-cookie':`owner_session=${id}; HttpOnly; SameSite=Strict; Path=/owner; Max-Age=900`,'cache-control':'no-store'}});
+  }
+  if(!session)return html('<h1>Owner sign-in</h1><p>Use OWNER_TOKEN from your private .env. This is separate from the MCP client token.</p><form method="post" action="/owner/login"><label for="token">Owner token</label><input id="token" name="token" type="password" autocomplete="current-password" required><button type="submit">Sign in</button></form>');
+  const match=/^\/owner\/intents\/([0-9a-f-]{36})$/.exec(url.pathname);
+  try {
+   if(match){
+    const intent=await store.getIntent(config.ownerId,match[1]!);
+    if(request.method==='POST'){
+     const body=await request.text();if(body.length>4096)return html('Request too large',413);const form=new URLSearchParams(body);
+     if(!secureEqual(form.get('csrf')??'',session.csrf))return html('Request verification failed',403);
+     if(form.get('action')!=='approve')return html('Unknown action',400);
+     await store.approve(config.ownerId,intent.id,form.get('digest')??'');
+     return html('<h1>Intent approved</h1><p>The approval is single-use and expires with the displayed terms. Return to your assistant to submit it.</p><a href="/owner">Account status</a>');
+    }
+    return html(`<h1>Review ${escape(intent.kind)}</h1><p>Expires ${escape(intent.expires_at.toISOString())}. Review the exact terms before authorizing.</p><pre>${escape(JSON.stringify(intent.terms,null,2))}</pre><form method="post" action="${escape(url.pathname)}"><input type="hidden" name="csrf" value="${session.csrf}"><input type="hidden" name="digest" value="${intent.digest}"><input type="hidden" name="action" value="approve"><button type="submit">Approve these exact terms once</button></form><p><a href="/owner">Leave without approving</a></p>`);
+   }
+   const a=await store.account(config.ownerId);const health=await store.workerHealth();
+   return html(`<h1>Amazon MCP owner control</h1><p>Worker: ${health?'running':'offline'}. Account writes: ${a.quarantined?'quarantined after an uncertain operation':'available subject to provider support'}.</p><p>Account handle: ${escape(a.id)}</p><p>Sign-in and payment credentials are entered directly in the dedicated Amazon browser. This page never collects them.</p><p>Open the intent review link returned by a preparation tool to inspect exact terms. No purchases run automatically.</p>`);
+  }catch(e){return html(`<h1>Action unavailable</h1><p>${escape(e instanceof DomainError?e.message:'Request failed')}</p>`,e instanceof DomainError?e.status:500);}
+ };
+}
