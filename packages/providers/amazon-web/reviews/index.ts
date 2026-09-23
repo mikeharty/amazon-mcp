@@ -1,7 +1,8 @@
 import type { Page } from 'playwright';
 import { asinFrom, integer, rating } from '../types.js';
 
-export async function extractReviews(page: Page, requestedAsin?: string) {
+export async function extractReviews(page: Page) {
+  const observedAsin = asinFrom(await page.locator('body').getAttribute('data-asin').catch(() => null));
   const aggregateText = await page.locator('[data-hook="rating-out-of-text"], #acrPopover .a-icon-alt').first().textContent().catch(() => null);
   const totalText = await page.locator('[data-hook="total-review-count"], #acrCustomerReviewText').first().textContent().catch(() => null);
   const reviews = await page.locator('[data-hook="review"]').evaluateAll(nodes => nodes.map(node => {
@@ -17,7 +18,7 @@ export async function extractReviews(page: Page, requestedAsin?: string) {
     };
   }));
   return {
-    asin: requestedAsin ?? asinFrom(page.url()),
+    asin: observedAsin,
     aggregate: { rating: rating(aggregateText), totalCount: integer(totalText), retrievedCount: reviews.length },
     reviews: reviews.map(item => ({ ...item, rating: rating(item.ratingText), ratingText: undefined })),
   };

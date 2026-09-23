@@ -41,8 +41,8 @@ export class AmazonWebProvider implements ShoppingProvider {
         switch (kind) {
           case 'products_search': data = { items: await extractSearch(page), page: boundedPage(input.page ?? decodeCursor(input.cursor)) }; break;
           case 'products_get': requiredAsin(input); data = await extractProduct(page); break;
-          case 'offers_list': data = await extractOffers(page, requiredAsin(input)); break;
-          case 'product_reviews_list': data = await extractReviews(page, requiredAsin(input)); break;
+          case 'offers_list': requiredAsin(input); data = await extractOffers(page); break;
+          case 'product_reviews_list': requiredAsin(input); data = await extractReviews(page); break;
           case 'product_media_list': requiredAsin(input); data = await extractMedia(page); break;
           case 'categories_browse': data = await extractCategory(page); break;
           case 'products_variants': {
@@ -51,7 +51,7 @@ export class AmazonWebProvider implements ShoppingProvider {
             data = { asin: product.asin, variants: product.variants };
             break;
           }
-          case 'products_related': data = await extractRelated(page, requiredAsin(input)); break;
+          case 'products_related': requiredAsin(input); data = await extractRelated(page); break;
           case 'sellers_get': data = await extractSeller(page); break;
           case 'seller_feedback_list': data = { ...(await extractSeller(page)), ...(await extractSellerFeedback(page)) }; break;
           case 'deals_search': data = await extractDeals(page); break;
@@ -68,6 +68,11 @@ export class AmazonWebProvider implements ShoppingProvider {
             data = prepared;
             break;
           }
+        }
+        if (['products_get', 'products_variants', 'products_related', 'product_media_list', 'offers_list', 'product_reviews_list'].includes(kind)) {
+          const requested = requiredAsin(input);
+          const observed = (data as { asin?: string }).asin;
+          if (observed && observed !== requested) return { status: 'conflict', data: { requestedAsin: requested, observedAsin: observed }, error: { code: 'wrong_product_identity', retryable: false } };
         }
         const missing = missingCoverage(kind, data);
         if (kind === 'checkout_prepare' && missing.some(item => item.startsWith('required:'))) data = { ...data as object, termsHash: undefined, ready: false };
@@ -88,6 +93,7 @@ export class AmazonWebProvider implements ShoppingProvider {
         if (kind === 'cart_add') return this.addToCart(page, terms, context);
         await gotoAndCheck(page, 'https://www.amazon.com/gp/cart/view.html');
         const before = await extractCart(page);
+        if (!before.recognized) return unrecognizedCart();
         const expectedRevision = requiredString(terms, 'expectedRevision', 64);
         if (before.revision !== expectedRevision) return { status: 'conflict', data: before, error: { code: 'stale_cart', retryable: true } };
         const lineRef = safeLineRef(terms.lineRef);
@@ -113,7 +119,7 @@ export class AmazonWebProvider implements ShoppingProvider {
             dispatched = true;
             await row.getByRole('button', { name: label }).or(row.getByRole('link', { name: label })).first().click();
           }
-          await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => undefined);
+          await page.waitForTimeout(100);
           const after = await extractCart(page);
           if (!cartPostcondition(kind, before, after, lineRef, terms)) return unknown(kind, after);
           return observed(after, context);
@@ -137,6 +143,7 @@ export class AmazonWebProvider implements ShoppingProvider {
     if (purchaseMode !== 'one_time') return { status: 'unsupported', error: { code: 'purchase_mode_not_supported', retryable: false, message: 'Only an explicitly observed one-time purchase mode is supported' } };
     await gotoAndCheck(page, 'https://www.amazon.com/gp/cart/view.html');
     const before = await extractCart(page);
+    if (!before.recognized) return unrecognizedCart();
     if (before.revision !== expectedRevision) return { status: 'conflict', data: before, error: { code: 'stale_cart', retryable: true } };
     await gotoAndCheck(page, `https://www.amazon.com/dp/${asin}`);
     const product = await extractProduct(page);
@@ -162,8 +169,9 @@ export class AmazonWebProvider implements ShoppingProvider {
         && line.sellerId?.toUpperCase() === expectedSellerId
         && normalizeText(line.condition) === normalizeText(expectedCondition)
         && line.purchaseMode === purchaseMode;
-      const beforeQuantity = before.lines.filter(matches).reduce((sum, line) => sum + line.quantity, 0);
-      const afterQuantity = cart.lines.filter(matches).reduce((sum, line) => sum + line.quantity, 0);
+      if (!cart.recognized) return unknown('cart_add', cart);
+      const beforeQuantity = before.lines.filter(line => line.location === 'active' && matches(line)).reduce((sum, line) => sum + line.quantity, 0);
+      const afterQuantity = cart.lines.filter(line => line.location === 'active' && matches(line)).reduce((sum, line) => sum + line.quantity, 0);
       if (afterQuantity - beforeQuantity !== quantity) return unknown('cart_add', cart);
       return observed(cart, context);
     } catch (error) {
@@ -260,14 +268,22 @@ function categoryUrl(input: Record<string, unknown>): string {
   return `https://www.amazon.com/s?rh=n:${node}`;
 }
 function cartPostcondition(kind: string, before: Awaited<ReturnType<typeof extractCart>>, after: Awaited<ReturnType<typeof extractCart>>, lineRef: string, terms: Record<string, unknown>): boolean {
+  if (!before.recognized || !after.recognized) return false;
   const prior = before.lines.find(line => line.lineRef === lineRef);
   const current = after.lines.find(line => line.lineRef === lineRef);
-  if (kind === 'cart_remove') return Boolean(prior && !current);
+  if (!prior || !completeCartIdentity(prior)) return false;
+  if (kind === 'cart_remove') return !current && !after.lines.some(line => sameCartIdentity(line, prior));
   if (kind === 'cart_move') {
     const destination = terms.destination === 'restore' ? 'active' : 'saved';
-    return Boolean(prior && current && current.location === destination && prior.location !== current.location);
+    return Boolean(current && sameCartIdentity(current, prior) && current.quantity === prior.quantity && current.location === destination && prior.location !== current.location);
   }
-  return current?.quantity === boundedQuantity(terms.quantity);
+  return Boolean(current && sameCartIdentity(current, prior) && current.location === prior.location && current.quantity === boundedQuantity(terms.quantity));
+}
+function completeCartIdentity(line: Awaited<ReturnType<typeof extractCart>>['lines'][number]): boolean {
+  return Boolean(line.asin && line.sellerId && line.condition && line.purchaseMode && line.location && Number.isInteger(line.quantity));
+}
+function sameCartIdentity(a: Awaited<ReturnType<typeof extractCart>>['lines'][number], b: Awaited<ReturnType<typeof extractCart>>['lines'][number]): boolean {
+  return a.asin === b.asin && a.sellerId === b.sellerId && normalizeText(a.condition) === normalizeText(b.condition) && a.purchaseMode === b.purchaseMode;
 }
 function observed(data: unknown, context: ProviderContext): Result {
   return { status: 'ok', data, observation: { observedAt: new Date().toISOString(), source: 'amazon-web', contextRef: context.accountRef }, coverage: { complete: true, missing: [] } };
@@ -275,6 +291,7 @@ function observed(data: unknown, context: ProviderContext): Result {
 function unknown(kind: string, data?: unknown): Result {
   return { status: 'outcome_unknown', data, error: { code: `${kind}_postcondition_unverified`, retryable: false, message: 'The browser action may have occurred, but its postcondition could not be verified. Reconcile before retrying.' } };
 }
+function unrecognizedCart(): Result { return { status: 'failed', coverage: { complete: false, missing: ['required:cart_marker'], reason: 'The visible page was not recognized as an Amazon cart' }, error: { code: 'cart_layout_unrecognized', retryable: false } }; }
 function staleSession(actualGeneration: number): Result { return { status: 'conflict', error: { code: 'stale_session_generation', retryable: true, message: `Browser session is generation ${actualGeneration}; refresh account state before continuing` } }; }
 function normalizeText(value?: string | null): string { return (value ?? '').replace(/\s+/g, ' ').trim().toLowerCase(); }
 function unsupported(kind: string): Result { return { status: 'unsupported', error: { code: 'unsupported_kind', retryable: false, message: `Amazon web provider does not implement ${kind}` } }; }
@@ -293,8 +310,12 @@ function missingCoverage(kind: string, data: any): string[] {
   const nonExhaustive = new Set(['products_search', 'categories_browse', 'products_related', 'offers_list', 'seller_feedback_list', 'product_reviews_list', 'product_media_list', 'deals_search', 'orders_list', 'subscriptions_list']);
   if (nonExhaustive.has(kind)) missing.push('source_completeness');
   if (kind === 'products_search' && data.items.length === 0) missing.push('required:results');
-  if (kind === 'products_get') for (const key of ['asin', 'title', 'price']) if (!data[key]) missing.push(`required:${key}`);
-  if (kind === 'products_variants' && !data.asin) missing.push('required:asin');
+  if (kind === 'products_get') {
+    for (const key of ['asin', 'title', 'price']) if (!data[key]) missing.push(key === 'asin' ? 'required:product_identity' : `required:${key}`);
+    for (const key of ['rating', 'reviewCount', 'availability']) if (data[key] === undefined) missing.push(key);
+  }
+  if (kind === 'products_variants' && !data.asin) missing.push('required:product_identity');
+  if (['products_related', 'product_media_list', 'offers_list', 'product_reviews_list'].includes(kind) && !data.asin) missing.push('required:product_identity');
   if (kind === 'offers_list' && data.offers.length === 0) missing.push('required:offers');
   if (kind === 'product_reviews_list' && data.reviews.length === 0) missing.push('required:reviews');
   if (kind === 'product_media_list' && data.media.length === 0) missing.push('required:media');

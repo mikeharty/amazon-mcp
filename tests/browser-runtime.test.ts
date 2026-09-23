@@ -32,7 +32,7 @@ describe('persistent browser runtime', () => {
     const runtime = new PersistentBrowserRuntime({ profileDir: join(root, 'profile'), headless: true, onSessionGeneration: generation => { generations.push(generation); } });
     await runtime.start();
     await runtime.run(async page => {
-      await page.route('https://www.amazon.com/**', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<title>Account</title><span id="nav-link-accountList-nav-line-1">Hello, Fixture</span>' }));
+      await page.route('**/*', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<title>Account</title><span id="nav-link-accountList-nav-line-1">Hello, Fixture</span>' }));
       await page.goto('https://www.amazon.com/gp/css/homepage.html');
     });
     const handoff = await runtime.beginHandoff();
@@ -71,7 +71,7 @@ describe('persistent browser runtime', () => {
     temporary.push(root);
     const runtime = new PersistentBrowserRuntime({ profileDir: join(root, 'profile'), headless: true });
     await runtime.start();
-    await runtime.run(page => page.route('https://www.amazon.com/**', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<title>Robot Check</title><input id="captchacharacters">' })));
+    await runtime.run(page => page.route('**/*', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<title>Robot Check</title><input id="captchacharacters">' })));
     const state = await runtime.navigate('https://www.amazon.com/errors/validateCaptcha');
     expect(state).toMatchObject({ kind: 'challenge', challenge: 'captcha' });
     await expect(runtime.run(async () => true)).rejects.toMatchObject({ code: 'handoff_in_progress' });

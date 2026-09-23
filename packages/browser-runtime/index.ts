@@ -83,7 +83,12 @@ export class PersistentBrowserRuntime {
       const context = this.context;
       this.page = undefined;
       this.context = undefined;
-      if (context) await context.close().catch(() => undefined);
+      if (context) {
+        try { await context.close(); }
+        catch {
+          throw new BrowserRuntimeError('recovery_required', 'Browser startup failed and its process could not be confirmed stopped; the profile lock was retained for explicit recovery');
+        }
+      }
       await this.releaseLock();
       throw error;
     }

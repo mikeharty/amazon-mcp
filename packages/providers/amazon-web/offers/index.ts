@@ -1,7 +1,8 @@
 import type { Page } from 'playwright';
 import { asinFrom, money } from '../types.js';
 
-export async function extractOffers(page: Page, requestedAsin?: string) {
+export async function extractOffers(page: Page) {
+  const observedAsin = asinFrom(await page.locator('body').getAttribute('data-asin').catch(() => null));
   const raw = await page.locator('#aod-offer, .olpOffer, [data-csa-c-type="widget"][data-csa-c-content-id="offer"]')
     .evaluateAll(nodes => nodes.map((node, index) => {
       const root = node as HTMLElement;
@@ -19,7 +20,7 @@ export async function extractOffers(page: Page, requestedAsin?: string) {
       };
     }));
   return {
-    asin: requestedAsin ?? asinFrom(page.url()),
+    asin: observedAsin,
     offers: raw.map(item => ({
       offerId: item.offerId, sellerName: item.sellerName || undefined,
       sellerId: item.sellerUrl?.match(/[?&]seller=([A-Z0-9]+)/i)?.[1], condition: item.condition || undefined,

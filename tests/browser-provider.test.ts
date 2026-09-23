@@ -17,7 +17,7 @@ beforeAll(async () => {
   browser = await chromium.launch({ headless: true });
   context = await browser.newContext();
   page = await context.newPage();
-  await page.route('https://www.amazon.com/**', routeFixture);
+  await context.route('**/*', routeFixture);
   provider = new AmazonWebProvider({ run: fn => fn(page), close: async () => {} });
 });
 afterAll(async () => { await browser?.close(); });
@@ -36,6 +36,8 @@ describe('Amazon web provider synthetic fixture E2E', () => {
     const product = await provider.read('products_get', { asin: 'B0FIXTURE1' }, ctx);
     expect(product.status).toBe('ok');
     expect(product.data).toMatchObject({ asin: 'B0FIXTURE1', rating: 4.6, attributes: { Capacity: '16 oz' } });
+    const wrongProduct = await provider.read('products_get', { asin: 'B0RELATED1' }, ctx);
+    expect(wrongProduct).toMatchObject({ status: 'conflict', error: { code: 'wrong_product_identity' }, data: { requestedAsin: 'B0RELATED1', observedAsin: 'B0FIXTURE1' } });
     const offers = await provider.read('offers_list', { asin: 'B0FIXTURE1' }, ctx);
     expect((offers.data as any).offers[0]).toMatchObject({ sellerId: 'A1FIXTURE', condition: 'New', price: { minorUnits: 2450 } });
     const reviews = await provider.read('product_reviews_list', { asin: 'B0FIXTURE1' }, ctx);
@@ -96,9 +98,11 @@ describe('Amazon web provider synthetic fixture E2E', () => {
     let productSeen = false;
     const failureContext = await browser.newContext();
     const failurePage = await failureContext.newPage();
-    await failurePage.route('https://www.amazon.com/**', async route => {
-      if (new URL(route.request().url()).pathname.startsWith('/dp/')) { productSeen = true; return route.fulfill({ status: 200, contentType: 'text/html', body: await readFile(join(fixtures, 'product.html'), 'utf8') }); }
-      if (productSeen && new URL(route.request().url()).pathname.includes('/cart/')) return route.abort('failed');
+    await failureContext.route('**/*', async route => {
+      const url = new URL(route.request().url());
+      if (url.hostname !== 'www.amazon.com') return route.abort('blockedbyclient');
+      if (url.pathname.startsWith('/dp/')) { productSeen = true; return route.fulfill({ status: 200, contentType: 'text/html', body: await readFile(join(fixtures, 'product.html'), 'utf8') }); }
+      if (productSeen && url.pathname.includes('/cart/')) return route.abort('failed');
       return routeFixture(route);
     });
     const failureProvider = new AmazonWebProvider({ run: fn => fn(failurePage), close: async () => {} });
@@ -114,6 +118,68 @@ describe('Amazon web provider synthetic fixture E2E', () => {
     expect(moved.status).toBe('ok');
     expect((moved.data as any).lines[0]).toMatchObject({ lineRef: 'cart-line-1', location: 'saved' });
   });
+
+  it('verifies a successful add by exact active-line quantity delta', async () => {
+    let added = false;
+    const successContext = await browser.newContext();
+    const successPage = await successContext.newPage();
+    await successContext.route('**/*', async route => {
+      const url = new URL(route.request().url());
+      if (url.hostname !== 'www.amazon.com') return route.abort('blockedbyclient');
+      if (url.pathname.startsWith('/dp/')) {
+        const body = (await readFile(join(fixtures, 'product.html'), 'utf8')).replace('<button id="add-to-cart-button">', '<button id="add-to-cart-button" onclick="location.href=\'/gp/cart/view.html?added=1\'">');
+        return route.fulfill({ status: 200, contentType: 'text/html', body });
+      }
+      if (url.pathname.includes('/cart/')) {
+        if (url.searchParams.get('added') === '1') added = true;
+        let body = await readFile(join(fixtures, 'cart.html'), 'utf8');
+        if (added) body = body.replace('<option value="2">2</option>', '<option value="2" selected>2</option>');
+        return route.fulfill({ status: 200, contentType: 'text/html', body });
+      }
+      return route.abort('blockedbyclient');
+    });
+    const successProvider = new AmazonWebProvider({ run: fn => fn(successPage), close: async () => {} });
+    const initial = await successProvider.read('cart_get', {}, ctx);
+    const result = await successProvider.mutate('cart_add', { asin: 'B0FIXTURE1', quantity: 1, expectedRevision: (initial.data as any).revision, expectedSellerId: 'A1FIXTURE', expectedCondition: 'New', purchaseMode: 'one_time' }, ctx);
+    expect(result.status).toBe('ok');
+    expect((result.data as any).lines[0]).toMatchObject({ asin: 'B0FIXTURE1', quantity: 2, location: 'active' });
+    await successContext.close();
+  });
+
+  it('returns outcome_unknown when the cart layout disappears after removal dispatch', async () => {
+    const missingContext = await browser.newContext();
+    const missingPage = await missingContext.newPage();
+    missingPage.setDefaultTimeout(500);
+    await missingContext.route('**/*', async route => {
+      const url = new URL(route.request().url());
+      if (url.hostname !== 'www.amazon.com') return route.abort('blockedbyclient');
+      if (url.pathname.includes('/cart/')) {
+        const body = (await readFile(join(fixtures, 'cart.html'), 'utf8')).replace('<button onclick="this.closest(\'.sc-list-item\').remove()">Delete</button>', '<button onclick="document.body.innerHTML=\'Unexpected layout\'">Delete</button>');
+        return route.fulfill({ status: 200, contentType: 'text/html', body });
+      }
+      return route.abort('blockedbyclient');
+    });
+    const missingProvider = new AmazonWebProvider({ run: fn => fn(missingPage), close: async () => {} });
+    const initial = await missingProvider.read('cart_get', {}, ctx);
+    const result = await missingProvider.mutate('cart_remove', { lineRef: 'cart-line-1', expectedRevision: (initial.data as any).revision }, ctx);
+    expect(result).toMatchObject({ status: 'outcome_unknown', error: { retryable: false } });
+    await missingContext.close();
+  });
+
+  it('does not attribute a product page without observed product identity', async () => {
+    const missingContext = await browser.newContext();
+    const missingPage = await missingContext.newPage();
+    await missingContext.route('**/*', route => {
+      const url = new URL(route.request().url());
+      if (url.hostname !== 'www.amazon.com') return route.abort('blockedbyclient');
+      return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><body><h1 id="productTitle">Unidentified product</h1><div id="corePrice_feature_div"><span class="a-offscreen">$10.00</span></div></body></html>' });
+    });
+    const missingProvider = new AmazonWebProvider({ run: fn => fn(missingPage), close: async () => {} });
+    const result = await missingProvider.read('products_get', { asin: 'B0FIXTURE1' }, ctx);
+    expect(result).toMatchObject({ status: 'partial', coverage: { missing: expect.arrayContaining(['required:product_identity']) } });
+    expect((result.data as any).asin).toBeUndefined();
+    await missingContext.close();
+  });
 });
 
 async function routeFixture(route: Route) {
@@ -128,6 +194,6 @@ async function routeFixture(route: Route) {
     : path === '/sp' ? 'seller.html'
     : path === '/deals' ? 'deals.html'
     : path.startsWith('/checkout') ? 'checkout.html' : undefined;
-  if (!file) return route.fulfill({ status: 404, body: 'not found' });
+  if (!file) return route.abort('blockedbyclient');
   return route.fulfill({ status: 200, contentType: 'text/html', body: await readFile(join(fixtures, file), 'utf8') });
 }

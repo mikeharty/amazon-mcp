@@ -21,7 +21,7 @@ export async function extractSearch(page: Page) {
   }));
 }
 
-export async function extractProduct(page: Page, requestedAsin?: string) {
+export async function extractProduct(page: Page) {
   const raw = await page.locator('body').evaluate(body => {
     const text = (selector: string) => body.querySelector(selector)?.textContent?.trim() || undefined;
     const image = body.querySelector<HTMLImageElement>('#landingImage, #imgBlkFront');
@@ -46,15 +46,15 @@ export async function extractProduct(page: Page, requestedAsin?: string) {
     };
   });
   return {
-    asin: asinFrom(raw.asin) ?? requestedAsin, title: raw.title, url: page.url(), byline: raw.byline,
+    asin: asinFrom(raw.asin), title: raw.title, url: page.url(), byline: raw.byline,
     price: money(raw.priceText), rating: rating(raw.ratingText), reviewCount: integer(raw.reviewCountText),
     availability: raw.availability, features: raw.features, attributes: raw.attributes, variants: raw.variants,
     media: dedupeMedia(raw.media),
   };
 }
 
-export async function extractMedia(page: Page, requestedAsin?: string) {
-  const product = await extractProduct(page, requestedAsin);
+export async function extractMedia(page: Page) {
+  const product = await extractProduct(page);
   const documents = await page.locator('#productDocuments a[href], #manualsAndGuides a[href]').evaluateAll(links => links.map(link => ({
     kind: 'document' as const,
     url: (link as HTMLAnchorElement).href,
@@ -71,7 +71,8 @@ export async function extractCategory(page: Page) {
   return { breadcrumbs, children, items: await extractSearch(page) };
 }
 
-export async function extractRelated(page: Page, requestedAsin?: string) {
+export async function extractRelated(page: Page) {
+  const observedAsin = asinFrom(await page.locator('body').getAttribute('data-asin').catch(() => null));
   const items = await page.locator('[data-a-carousel-options] li, [data-csa-c-content-id*="customers-who"] [data-asin], #sp_detail [data-asin]').evaluateAll(nodes => nodes.map(node => {
     const root = node as HTMLElement;
     const link = root.querySelector<HTMLAnchorElement>('a[href*="/dp/"]');
@@ -81,7 +82,7 @@ export async function extractRelated(page: Page, requestedAsin?: string) {
       relation: root.closest('[data-csa-c-content-id*="customers-who"]') ? 'customers_also_viewed' : 'page_carousel',
     };
   }));
-  return { asin: requestedAsin ?? asinFrom(page.url()), items: items.filter(item => item.asin && item.title) };
+  return { asin: observedAsin, items: items.filter(item => item.asin && item.title) };
 }
 
 function dedupeMedia<T extends { url: string }>(media: T[]): T[] {
