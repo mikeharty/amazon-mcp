@@ -136,6 +136,8 @@ describe("Amazon web provider synthetic fixture E2E", () => {
       name: "Fixture Seller",
     });
     expect((seller.data as any).feedbackPeriods[0].count).toBe(120);
+    expect((seller.data as any).feedbackPeriods[1].count).toBe(42);
+    expect((seller.data as any).feedbackPeriods[2].count).toBeUndefined();
     const feedback = await provider.read(
       "seller_feedback_list",
       { sellerId: "A1FIXTURE" },
