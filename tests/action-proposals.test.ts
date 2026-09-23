@@ -18,6 +18,7 @@ const context: ProposalContext = {
   expiresAt: '2026-09-22T20:15:00.000Z',
   handoffUrl: 'https://www.amazon.com/gp/your-account/order-details?orderID=123',
 };
+const now = () => Date.parse('2026-09-22T20:01:00.000Z');
 
 describe('action proposal preparation', () => {
   it('preserves the actual cancellation reason and binds revision, session, and private handoff', () => {
@@ -25,6 +26,7 @@ describe('action proposal preparation', () => {
       context,
       expectedRevision: 7,
       expectedSessionGeneration: 3,
+      now,
       observedOption: {
         kind: 'order_cancel',
         available: true,
@@ -53,6 +55,7 @@ describe('action proposal preparation', () => {
     expect(proposal.handoff).toEqual(
       expect.objectContaining({ access: 'owner_private', cacheControl: 'private, no-store' }),
     );
+    expect(proposal.handoff).not.toHaveProperty('resourceUri');
   });
 
   it('rejects incomplete evidence, stale context, and selection not present in observed options', () => {
@@ -72,6 +75,7 @@ describe('action proposal preparation', () => {
           context,
           expectedRevision: 6,
           expectedSessionGeneration: 3,
+          now,
           observedOption,
           selection: { kind: 'order_edit', selectedValueRef: 'express' },
         }),
@@ -83,6 +87,7 @@ describe('action proposal preparation', () => {
           context,
           expectedRevision: 7,
           expectedSessionGeneration: 3,
+          now,
           observedOption,
           selection: { kind: 'order_edit', selectedValueRef: 'overnight' },
         }),
@@ -95,6 +100,7 @@ describe('action proposal preparation', () => {
       context,
       expectedRevision: 7,
       expectedSessionGeneration: 3,
+      now,
       observedOption: {
         kind: 'buy_again',
         available: true,
@@ -127,7 +133,7 @@ describe('action proposal preparation', () => {
       available: true,
       source: 'amazon_authenticated',
       orderRef: 'order-1',
-      eligibleLines: [{ lineRef: 'line-1', asin: 'B00M0QVG3W', title: 'Camera', purchasedQuantity: 2, eligibleQuantity: 1 }],
+      eligibleLines: [{ lineRef: 'line-1', asin: 'B00M0QVG3W', title: 'Camera', purchasedQuantity: 2, eligibleQuantity: 1, selectedQuantity: 1 }],
       eligibleThrough: '2026-10-01T07:00:00.000Z',
       method: { methodRef: 'ups-dropoff', label: 'UPS Store drop-off' },
       refundDestination: { destinationRef: 'visa-1234', maskedLabel: 'Visa ending 1234' },
@@ -139,6 +145,7 @@ describe('action proposal preparation', () => {
       context,
       expectedRevision: 7,
       expectedSessionGeneration: 3,
+      now,
       observedOption,
       selection: {
         kind: 'return', lines: [{ lineRef: 'line-1', quantity: 1 }], userReason: 'Lens was scratched',
@@ -153,7 +160,7 @@ describe('action proposal preparation', () => {
 
     expectProposalError(
       () => prepareActionProposal({
-        context, expectedRevision: 7, expectedSessionGeneration: 3, observedOption,
+        context, expectedRevision: 7, expectedSessionGeneration: 3, observedOption, now,
         selection: {
           kind: 'return', lines: [{ lineRef: 'line-1', quantity: 2 }], userReason: 'Lens was scratched',
           methodRef: 'ups-dropoff', refundDestinationRef: 'visa-1234',
@@ -168,9 +175,10 @@ describe('action proposal preparation', () => {
       context,
       expectedRevision: 7,
       expectedSessionGeneration: 3,
+      now,
       observedOption: {
         kind: 'replacement', available: true, source: 'amazon_authenticated', orderRef: 'order-1',
-        eligibleLines: [{ lineRef: 'line-1', asin: 'B00M0QVG3W', title: 'Camera', purchasedQuantity: 1, eligibleQuantity: 1 }],
+        eligibleLines: [{ lineRef: 'line-1', asin: 'B00M0QVG3W', title: 'Camera', purchasedQuantity: 1, eligibleQuantity: 1, selectedQuantity: 1 }],
         eligibleThrough: '2026-10-01T07:00:00.000Z', method: { methodRef: 'ups', label: 'UPS' },
         replacement: {
           offerRef: 'replacement-1', asin: 'B00M0QVG3W', title: 'Camera', sellerRef: 'amazon', quantity: 1,
@@ -194,6 +202,7 @@ describe('action proposal preparation', () => {
         context,
         expectedRevision: 7,
         expectedSessionGeneration: 3,
+        now,
         observedOption: {
           kind: 'subscription_change', available: true, source: 'amazon_authenticated',
           subscriptionRef: 'sub-1', subscriptionRevision: 6,
@@ -217,6 +226,7 @@ describe('action proposal preparation', () => {
       kind: 'support_contact',
       destinationRef: 'order-1',
       userText,
+      now,
     });
     expect(draft.userText).toBe(userText);
     expect(draft).not.toHaveProperty('observedAt');
@@ -228,9 +238,62 @@ describe('action proposal preparation', () => {
           proposalId: 'draft-2', ownerId: 'owner-1', accountRef: 'account-1',
           expiresAt: context.expiresAt, handoffUrl: 'https://amazon.com.evil.example/contact',
         },
-        kind: 'support_contact', destinationRef: 'order-1', userText,
+        kind: 'support_contact', destinationRef: 'order-1', userText, now,
       }),
       'invalid_handoff_url',
+    );
+  });
+
+  it('rejects expired/future evidence, invalid generations, and expired return eligibility', () => {
+    const cancel: ObservedActionOption = {
+      kind: 'order_cancel', available: true, source: 'amazon_authenticated',
+      orderRef: 'order-1', lineRefs: ['line-1'], requiresReason: false,
+    };
+    const selection = { kind: 'order_cancel' as const };
+
+    expectProposalError(
+      () => prepareActionProposal({
+        context: { ...context, expiresAt: '2026-09-22T20:00:30.000Z' },
+        expectedRevision: 7, expectedSessionGeneration: 3, observedOption: cancel, selection, now,
+      }),
+      'invalid_expiry',
+    );
+    expectProposalError(
+      () => prepareActionProposal({
+        context: { ...context, observedAt: '2026-09-22T20:02:00.000Z' },
+        expectedRevision: 7, expectedSessionGeneration: 3, observedOption: cancel, selection, now,
+      }),
+      'stale_observation',
+    );
+    expectProposalError(
+      () => prepareActionProposal({
+        context: { ...context, sessionGeneration: -1 },
+        expectedRevision: 7, expectedSessionGeneration: -1, observedOption: cancel, selection, now,
+      }),
+      'invalid_revision',
+    );
+
+    const expiredReturn: ObservedActionOption = {
+      kind: 'return', available: true, source: 'amazon_authenticated', orderRef: 'order-1',
+      eligibleLines: [{
+        lineRef: 'line-1', asin: 'B00M0QVG3W', title: 'Camera',
+        purchasedQuantity: 1, eligibleQuantity: 1, selectedQuantity: 1,
+      }],
+      eligibleThrough: '2026-09-22T20:01:00.000Z',
+      method: { methodRef: 'ups', label: 'UPS' },
+      refundDestination: { destinationRef: 'visa-1234', maskedLabel: 'Visa ending 1234' },
+      refundAmount: { currency: 'USD', amountMinor: 2999 },
+      fee: { currency: 'USD', amountMinor: 0 },
+    };
+    expectProposalError(
+      () => prepareActionProposal({
+        context, expectedRevision: 7, expectedSessionGeneration: 3, observedOption: expiredReturn, now,
+        selection: {
+          kind: 'return', lines: [{ lineRef: 'line-1', quantity: 1 }], userReason: 'Damaged',
+          methodRef: 'ups', refundDestinationRef: 'visa-1234',
+        },
+      }),
+      'return_eligibility_expired',
     );
   });
 });

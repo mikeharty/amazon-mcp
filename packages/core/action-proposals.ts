@@ -98,6 +98,7 @@ export type EligibleReturnLine = Readonly<{
   title: string;
   purchasedQuantity: number;
   eligibleQuantity: number;
+  selectedQuantity: number;
 }>;
 
 export type ActionSelection =
@@ -132,7 +133,6 @@ export type ActionProposal = Readonly<{
 export type PrivateHandoff = Readonly<{
   url: string;
   expiresAt: string;
-  resourceUri: string;
   access: 'owner_private';
   cacheControl: 'private, no-store';
 }>;
@@ -143,6 +143,9 @@ export type PrepareActionInput = Readonly<{
   expectedSessionGeneration: number;
   observedOption: ObservedActionOption;
   selection: ActionSelection;
+  now?: () => number;
+  maxObservationAgeMs?: number;
+  maxHandoffWindowMs?: number;
 }>;
 
 export class ProposalValidationError extends Error {
@@ -154,11 +157,19 @@ export class ProposalValidationError extends Error {
 
 /** `observedOption` is a trusted domain-port value. Do not expose it as caller-supplied MCP input. */
 export function prepareActionProposal(input: PrepareActionInput): ActionProposal {
-  validateContext(input.context, input.expectedRevision, input.expectedSessionGeneration);
+  const now = input.now?.() ?? Date.now();
+  validateContext(
+    input.context,
+    input.expectedRevision,
+    input.expectedSessionGeneration,
+    now,
+    input.maxObservationAgeMs ?? 5 * 60_000,
+    input.maxHandoffWindowMs ?? 15 * 60_000,
+  );
   if (!input.observedOption.available) fail('action_unavailable', 'The observed action is unavailable');
   if (input.selection.kind !== input.observedOption.kind) fail('selection_mismatch', 'Selection does not match observed action');
 
-  const materialTerms = buildMaterialTerms(input.observedOption, input.selection, input.context.revision);
+  const materialTerms = buildMaterialTerms(input.observedOption, input.selection, input.context.revision, now);
   const copiedTerms = structuredClone(materialTerms);
   const digestInput = {
     ownerId: input.context.ownerId,
@@ -206,13 +217,19 @@ export function prepareUserDraft(input: Readonly<{
   kind: DraftHandoff['kind'];
   destinationRef: string;
   userText: string;
+  now?: () => number;
+  maxHandoffWindowMs?: number;
 }>): DraftHandoff {
   requiredRef(input.context.proposalId, 'proposalId');
   requiredRef(input.context.ownerId, 'ownerId');
   requiredRef(input.context.accountRef, 'accountRef');
   requiredRef(input.destinationRef, 'destinationRef');
   if (!input.userText || input.userText.length > 10_000) fail('invalid_user_text', 'User text must be 1 to 10000 characters');
-  validateHandoff(input.context.handoffUrl, input.context.expiresAt);
+  const now = input.now?.() ?? Date.now();
+  const expiresAt = validateHandoff(input.context.handoffUrl, input.context.expiresAt);
+  if (expiresAt <= now || expiresAt - now > (input.maxHandoffWindowMs ?? 15 * 60_000)) {
+    fail('invalid_expiry', 'Draft handoff expiry is outside the allowed window');
+  }
 
   return Object.freeze({
     proposalId: input.context.proposalId,
@@ -228,6 +245,7 @@ function buildMaterialTerms(
   option: ObservedActionOption,
   selection: ActionSelection,
   contextRevision: number,
+  now: number,
 ): Record<string, unknown> {
   switch (option.kind) {
     case 'order_cancel': {
@@ -283,7 +301,9 @@ function buildMaterialTerms(
       }
       validateMoney(option.refundAmount, 'refundAmount');
       validateMoney(option.fee, 'fee');
-      requiredInstant(option.eligibleThrough, 'eligibleThrough');
+      if (requiredInstant(option.eligibleThrough, 'eligibleThrough') <= now) {
+        fail('return_eligibility_expired', 'Return eligibility has expired');
+      }
       return {
         orderRef: requiredRef(option.orderRef, 'orderRef'),
         lines,
@@ -302,8 +322,12 @@ function buildMaterialTerms(
       validateMoney(option.replacement.orderTotal, 'replacement.orderTotal');
       validateMoney(option.contingentCharge, 'contingentCharge');
       validateMoney(option.fee, 'fee');
-      requiredInstant(option.eligibleThrough, 'eligibleThrough');
-      requiredInstant(option.originalReturnDeadline, 'originalReturnDeadline');
+      if (requiredInstant(option.eligibleThrough, 'eligibleThrough') <= now) {
+        fail('return_eligibility_expired', 'Replacement eligibility has expired');
+      }
+      if (requiredInstant(option.originalReturnDeadline, 'originalReturnDeadline') <= now) {
+        fail('return_deadline_expired', 'Original-item return deadline has expired');
+      }
       return {
         orderRef: requiredRef(option.orderRef, 'orderRef'),
         lines,
@@ -353,26 +377,61 @@ function validateReturnSelection(
   requiredUserReason(selection.userReason);
   const eligible = new Map(option.eligibleLines.map((line) => [line.lineRef, line]));
   const selectedRefs = new Set(selection.lines.map((line) => line.lineRef));
-  if (eligible.size !== option.eligibleLines.length || selection.lines.length === 0 || selectedRefs.size !== selection.lines.length) {
+  if (
+    eligible.size !== option.eligibleLines.length ||
+    selection.lines.length === 0 ||
+    selectedRefs.size !== selection.lines.length ||
+    selectedRefs.size !== eligible.size
+  ) {
     fail('invalid_return_lines', 'Return lines are empty or ambiguous');
+  }
+  for (const line of option.eligibleLines) {
+    requiredRef(line.lineRef, 'lineRef');
+    requiredRef(line.asin, 'asin');
+    requiredRef(line.title, 'title');
+    positiveInteger(line.purchasedQuantity, 'purchasedQuantity');
+    positiveInteger(line.eligibleQuantity, 'eligibleQuantity');
+    positiveInteger(line.selectedQuantity, 'selectedQuantity');
+    if (line.eligibleQuantity > line.purchasedQuantity || line.selectedQuantity > line.eligibleQuantity) {
+      fail('invalid_return_quantity', 'Observed return quantities are inconsistent');
+    }
   }
   return selection.lines.map((selected) => {
     const line = eligible.get(selected.lineRef);
-    if (!line || !Number.isSafeInteger(selected.quantity) || selected.quantity < 1 || selected.quantity > line.eligibleQuantity) {
-      fail('invalid_return_quantity', 'Return quantity exceeds observed eligibility');
+    if (!line || selected.quantity !== line.selectedQuantity) {
+      fail('invalid_return_quantity', 'Return quantity does not match the observed quote');
     }
     return { ...line, quantity: selected.quantity };
   });
 }
 
-function validateContext(context: ProposalContext, expectedRevision: number, expectedSessionGeneration: number): void {
+function validateContext(
+  context: ProposalContext,
+  expectedRevision: number,
+  expectedSessionGeneration: number,
+  now: number,
+  maxObservationAgeMs: number,
+  maxHandoffWindowMs: number,
+): void {
   requiredRef(context.proposalId, 'proposalId');
   requiredRef(context.ownerId, 'ownerId');
   requiredRef(context.accountRef, 'accountRef');
+  nonNegativeInteger(context.revision, 'revision');
+  nonNegativeInteger(context.sessionGeneration, 'sessionGeneration');
+  nonNegativeInteger(expectedRevision, 'expectedRevision');
+  nonNegativeInteger(expectedSessionGeneration, 'expectedSessionGeneration');
+  positiveInteger(maxObservationAgeMs, 'maxObservationAgeMs');
+  positiveInteger(maxHandoffWindowMs, 'maxHandoffWindowMs');
   if (context.revision !== expectedRevision) fail('stale_revision', 'Observed revision changed');
   if (context.sessionGeneration !== expectedSessionGeneration) fail('stale_session', 'Amazon session generation changed');
   const observedAt = requiredInstant(context.observedAt, 'observedAt');
   const expiresAt = validateHandoff(context.handoffUrl, context.expiresAt);
+  if (observedAt > now || now - observedAt > maxObservationAgeMs) {
+    fail('stale_observation', 'Observed action evidence is stale or future-dated');
+  }
+  if (expiresAt <= now || expiresAt - now > maxHandoffWindowMs) {
+    fail('invalid_expiry', 'Proposal expiry is outside the allowed window');
+  }
   if (expiresAt <= observedAt) fail('invalid_expiry', 'Proposal must expire after its observation');
 }
 
@@ -400,7 +459,6 @@ function privateHandoff(context: DraftContext): PrivateHandoff {
   return Object.freeze({
     url: context.handoffUrl,
     expiresAt: context.expiresAt,
-    resourceUri: `amazon://accounts/${encodeURIComponent(context.accountRef)}/action-proposals/${encodeURIComponent(context.proposalId)}`,
     access: 'owner_private',
     cacheControl: 'private, no-store',
   });
@@ -458,6 +516,10 @@ function requiredInstant(value: string, name: string): number {
 
 function positiveInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 1) fail('invalid_quantity', `${name} must be a positive integer`);
+}
+
+function nonNegativeInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) fail('invalid_revision', `${name} must be a non-negative safe integer`);
 }
 
 function nonEmptyUnique(values: readonly string[], name: string): string[] {
