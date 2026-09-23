@@ -97,7 +97,7 @@ export function createKeepaProvider(options: KeepaProviderOptions = {}): KeepaPr
   const now = options.now ?? Date.now;
   let blockedUntil = 0;
   let callsStarted = 0;
-  let tokensConsumed = 0;
+  let tokensCommitted = 0;
   let queue: Promise<void> = Promise.resolve();
 
   async function request(
@@ -106,13 +106,14 @@ export function createKeepaProvider(options: KeepaProviderOptions = {}): KeepaPr
     estimatedTokens: number,
   ): Promise<KeepaResult<unknown>> {
     const operation = async (): Promise<KeepaResult<unknown>> => {
-      if (callsStarted >= maxCalls || tokensConsumed + estimatedTokens > maxTokens) {
+      if (callsStarted >= maxCalls || tokensCommitted + estimatedTokens > maxTokens) {
         return failure('session_budget_exhausted', 'The configured Keepa session budget is exhausted');
       }
       if (now() < blockedUntil) {
         return failure('rate_limited', 'Keepa token bucket has not refilled', new Date(blockedUntil).toISOString());
       }
       callsStarted += 1;
+      tokensCommitted += estimatedTokens;
 
       const url = new URL(endpoint, baseUrl);
       params.set('key', configuredApiKey);
@@ -129,7 +130,7 @@ export function createKeepaProvider(options: KeepaProviderOptions = {}): KeepaPr
         });
         const payload = await readBoundedJson(response, maxResponseBytes);
         const tokens = readTokenState(payload);
-        tokensConsumed += Math.max(0, tokens.tokensConsumed ?? 0);
+        tokensCommitted += Math.max(0, (tokens.tokensConsumed ?? estimatedTokens) - estimatedTokens);
         if (tokens.tokensLeft !== undefined && tokens.tokensLeft <= 0 && tokens.refillInMs !== undefined) {
           blockedUntil = now() + Math.max(0, tokens.refillInMs);
         }
@@ -162,8 +163,13 @@ export function createKeepaProvider(options: KeepaProviderOptions = {}): KeepaPr
     enabled: true,
     async productHistory({ asins, days = 365 }) {
       const validAsins = validateIdentifiers(asins, /^[A-Z0-9]{10}$/, maxItems, 'ASIN');
-      const validDays = boundedInteger(days, 1, 3650, 'days');
       if (!validAsins.ok) return invalidRequest(validAsins.reason);
+      let validDays: number;
+      try {
+        validDays = boundedInteger(days, 1, 3650, 'days');
+      } catch {
+        return invalidRequest('Invalid history window');
+      }
 
       const response = await request(
         'product',

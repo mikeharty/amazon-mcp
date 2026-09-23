@@ -133,6 +133,23 @@ describe('Keepa provider', () => {
     expect(JSON.stringify(failed)).not.toContain(secret);
   });
 
+  it('reserves estimated tokens when a call fails without token metadata and returns invalid days safely', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(new Error('timeout'));
+    const provider = createKeepaProvider({ apiKey: 'private-key', fetch, maxTokensPerSession: 1 });
+
+    const invalidDays = await provider.productHistory({ asins: ['B00M0QVG3W'], days: 0 });
+    expect(invalidDays).toEqual(expect.objectContaining({ status: 'failed', error: { code: 'invalid_request' } }));
+    expect(fetch).not.toHaveBeenCalled();
+
+    expect(await provider.productHistory({ asins: ['B00M0QVG3W'] })).toEqual(
+      expect.objectContaining({ status: 'failed', error: { code: 'provider_error' } }),
+    );
+    expect(await provider.productHistory({ asins: ['B00M0QVG3W'] })).toEqual(
+      expect.objectContaining({ status: 'failed', error: { code: 'session_budget_exhausted' } }),
+    );
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it('honors the returned token refill window before making another paid call', async () => {
     let now = 1_000_000;
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
