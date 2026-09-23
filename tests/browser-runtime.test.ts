@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -50,6 +50,31 @@ describe('persistent browser runtime', () => {
     const runtime = new PersistentBrowserRuntime({ profileDir: join(root, 'profile'), headless: true });
     await runtime.start();
     await expect(runtime.navigate('https://example.com/')).rejects.toEqual(expect.objectContaining<Partial<BrowserRuntimeError>>({ code: 'host_not_allowed' }));
+    await runtime.close();
+  });
+
+  it('never steals a stale owner lock automatically', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'amazon-mcp-runtime-'));
+    temporary.push(root);
+    const profileDir = join(root, 'profile');
+    await mkdir(profileDir);
+    await writeFile(join(profileDir, '.amazon-mcp-dedicated-profile'), '{"version":1,"sessionGeneration":0}\n');
+    const lockDir = `${profileDir}.amazon-mcp-owner`;
+    await mkdir(lockDir);
+    await writeFile(join(lockDir, 'owner.json'), JSON.stringify({ version: 1, pid: 999999, host: 'old-host', runtimeId: 'stale-runtime', acquiredAt: '2026-01-01T00:00:00.000Z', profileHash: 'fixture' }));
+    const runtime = new PersistentBrowserRuntime({ profileDir, headless: true });
+    await expect(runtime.start()).rejects.toMatchObject({ code: 'recovery_required' });
+  });
+
+  it('latches a detected challenge so queued automation cannot navigate it away', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'amazon-mcp-runtime-'));
+    temporary.push(root);
+    const runtime = new PersistentBrowserRuntime({ profileDir: join(root, 'profile'), headless: true });
+    await runtime.start();
+    await runtime.run(page => page.route('https://www.amazon.com/**', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<title>Robot Check</title><input id="captchacharacters">' })));
+    const state = await runtime.navigate('https://www.amazon.com/errors/validateCaptcha');
+    expect(state).toMatchObject({ kind: 'challenge', challenge: 'captcha' });
+    await expect(runtime.run(async () => true)).rejects.toMatchObject({ code: 'handoff_in_progress' });
     await runtime.close();
   });
 });

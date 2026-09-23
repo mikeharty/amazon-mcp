@@ -80,6 +80,10 @@ export class PersistentBrowserRuntime {
       await this.installNetworkPolicy(this.context);
       this.page = this.context.pages()[0] ?? await this.context.newPage();
     } catch (error) {
+      const context = this.context;
+      this.page = undefined;
+      this.context = undefined;
+      if (context) await context.close().catch(() => undefined);
       await this.releaseLock();
       throw error;
     }
@@ -89,7 +93,16 @@ export class PersistentBrowserRuntime {
     const queued = this.tail.then(async () => {
       if (!this.context || !this.page) throw new BrowserRuntimeError('runtime_not_started', 'Browser runtime is not started');
       if (this.paused) throw new BrowserRuntimeError('handoff_in_progress', 'Automation is paused for user handoff');
-      return operation(this.page);
+      try {
+        const result = await operation(this.page);
+        const state = await classifyPage(this.page);
+        if (state.kind === 'challenge') this.paused = true;
+        return result;
+      } catch (error) {
+        const state = await classifyPage(this.page).catch(() => undefined);
+        if (state?.kind === 'challenge') this.paused = true;
+        throw error;
+      }
     });
     this.tail = queued.catch(() => undefined);
     return queued;
@@ -146,7 +159,7 @@ export class PersistentBrowserRuntime {
   }
 
   private allowed(url: URL): boolean {
-    if (url.protocol === 'about:' || url.protocol === 'data:') return true;
+    if (url.href === 'about:blank') return true;
     if (url.protocol !== 'https:') return false;
     const hosts = this.options.allowedHosts ?? DEFAULT_HOSTS;
     return hosts.some(host => url.hostname === host || url.hostname.endsWith(`.${host}`));
