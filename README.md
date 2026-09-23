@@ -41,7 +41,7 @@ The smoke test lists tools and capability state without making Amazon requests. 
 
 ## Dedicated Amazon login
 
-Stop the browser worker before launching login. The login script exclusively owns its profile while the user interacts with Amazon:
+Stop the browser worker before launching login. The login command loads the same `.env` as the worker, including a custom `AMAZON_PROFILE_DIR`; `pnpm run browser:login -- --check-config` prints only the resolved path without opening a browser. The login script exclusively owns its profile while the user interacts with Amazon:
 
 ```sh
 pnpm run browser:login
@@ -57,13 +57,13 @@ A crash may leave `.local/amazon-profile.amazon-mcp-owner`. The runtime delibera
 
 ## Features and limits
 
-The registered browser surface includes product/search/category/variant/media/related reads, offers, seller/feedback, reviews, deal cards, cart, order/shipment and subscription reads, and checkout review snapshots. Four cart mutations use fresh revisions and postcondition checks. Missing required identity/layout data prevents confident results or writes. These integrations remain fixture verified until separately exercised against a live account.
+The registered browser surface includes product/search/category/variant/media/related reads, offers, seller/feedback, reviews, deal cards, cart, order/shipment and subscription reads, and checkout review snapshots. Four cart mutations require explicit line identity, quantity, purchase mode and cart location before any UI effect, then check postconditions. Missing evidence returns unsupported before dispatch; absence of subscription text is not proof of one-time mode. Missing required identity/layout data prevents confident results or writes. These integrations remain fixture verified until separately exercised against a live account.
 
 Checkout review snapshots are **not executable purchase authorizations**. Checkout submission, payment/address/shipping selection, order cancellation/editing, returns/replacements, subscription mutation/enrollment and review submission are not exposed as automated actions. `content_draft` preserves supplied review/feedback/support text for owner review and never publishes. Internal action-proposal validation and the consent journal are tested with simulated effects; that does not establish an Amazon submission adapter.
 
 Watches observe configured product/offer/order/shipment/subscription reads at intervals of at least five minutes. Product watches can emit only when an observed USD price crosses down to a configured threshold. Notifications stay in a durable owner-scoped inbox (`events_list` and `amazon://events`). The Mac and worker must be awake; MCP does not wake a closed client. Optional macOS desktop notices are implemented and default off: set `DESKTOP_NOTIFICATIONS=true` and restart gateway/worker to enable generic private-inbox notices. Delivery state is persisted; an interrupted delivery is not blindly repeated. The adapter is tested with fake delivery, and actual OS notification permission/display remains unverified. No email or Web Push integration is configured.
 
-`RETAIN_OBSERVATIONS=true` enables product observations collected by this installation; there is no pre-install history. Keepa needs an existing paid key plus `KEEPA_ENABLED=true`. Limits in `.env.example` cap calls and estimated/reported token use per gateway process; restart resets them, and unknown provider charges cannot be guaranteed in advance. No paid provider calls are part of tests. Creators API remains unimplemented and disabled.
+`RETAIN_OBSERVATIONS=true` enables product observations collected by this installation; there is no pre-install history. Product history survives ordinary worker/session restarts. Each point retains encrypted source/session/delivery provenance; unknown delivery contexts remain separate and are never merged into a quote. Keepa needs an existing paid key plus `KEEPA_ENABLED=true`. Limits in `.env.example` cap calls and estimated/reported token use per gateway process; restart resets them, and unknown provider charges cannot be guaranteed in advance. No paid provider calls are part of tests. Creators API remains unimplemented and disabled.
 
 ## Verification
 

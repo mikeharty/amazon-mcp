@@ -8,7 +8,7 @@ import {
 } from "../../packages/contracts/index.js";
 import { Store } from "../../packages/store/index.js";
 import { Monitoring } from "../../packages/store/monitoring.js";
-import { digest } from "../../packages/store/crypto.js";
+import { productHistorySubject } from "../../packages/core/observations.js";
 import { prepareUserDraft } from "../../packages/core/action-proposals.js";
 import { compareOffers } from "../../packages/core/comparison.js";
 import type { KeepaProvider } from "../../packages/providers/keepa/index.js";
@@ -478,7 +478,7 @@ export function createRegistry(
   );
   add(
     "prices_history",
-    "Read retained own product observations for this account/session. No pre-install backfill; only populated when permitted retention is enabled.",
+    "Read retained own product observations across account runtime restarts, with per-point source/session/delivery provenance. These are historical observations, never one merged quote. No pre-install backfill; only populated when permitted retention is enabled.",
     z
       .object({
         ...account,
@@ -490,11 +490,7 @@ export function createRegistry(
     true,
     async (input, owner) => {
       const a = await store.getAccount(owner.id, String(input.accountRef));
-      const subject = digest({
-        kind: "products_get",
-        input: { asin: input.asin },
-        session: a.session_generation,
-      });
+      const subject = productHistorySubject(a.marketplace, String(input.asin));
       return {
         status: "partial",
         data: {
@@ -505,11 +501,14 @@ export function createRegistry(
             Number(input.limit),
           ),
           source: "own-observations",
+          quoteEligible: false,
+          contextPolicy:
+            "Each point retains its own context; unverified delivery contexts are not comparable quotes",
           retentionEnabled: options.retainObservations,
         },
         coverage: {
           complete: false,
-          missing: ["pre-install-history"],
+          missing: ["pre-install-history", "verified-delivery-context"],
           reason: "Only permitted observations recorded by this installation",
         },
       };

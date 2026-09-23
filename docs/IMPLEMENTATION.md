@@ -41,7 +41,7 @@ Record source access basis before live activation; no stealth, CAPTCHA bypass, p
 - Internal order/return/replacement/subscription proposal validation is being reviewed independently; it will not be represented as a live submission adapter.
 - README now documents actual install/start/login/test commands and default-off live/paid settings. Capability ledger separates delivered code from broader planned work.
 
-## Final integrated verification, 2026-09-22
+## Initial integrated verification, 2026-09-22
 
 - `TEST_DATABASE_URL=postgres://amazon_mcp:local-development-only@127.0.0.1:55432/amazon_mcp npx pnpm@10.32.1 run verify`: **64 tests, 11 files passed**, typecheck and build passed, no skipped database suites. Tests create/drop distinct temporary databases; browser tests intercept all network and use synthetic pages.
 - Full `npx pnpm@10.32.1 audit --json`: **zero advisories**, including development dependencies. Vitest upgraded from the initial 3.2.4 baseline to maintained 5.0.1 after the [maintainer advisory](https://github.com/vitest-dev/vitest/security/advisories/GHSA-82fw-gwwq-j7x9); tsx upgraded to 4.23.15. Registry versions and engine requirements were rechecked before install.
@@ -51,8 +51,19 @@ Record source access basis before live activation; no stealth, CAPTCHA bypass, p
 - The separate login process remains waiting for human completion; no Enter/resume signal has been sent without a user answer. Account/live browsing and paid Keepa remain disabled in local configuration.
 - Remaining feature gaps and their evidence boundaries are detailed in [capabilities](capabilities.md). Local deployment only; no remote push, deployment, paid call or shopping commitment.
 
-### Final runtime smoke
+### Initial integrated runtime smoke
 
 The compiled gateway and worker run from `dist/` on loopback. `node --env-file=.env dist/scripts/mcp-smoke.js` negotiated MCP `2026-07-28`, discovered **35 tools**, and returned `workerOnline=true`, `liveEnabled=false`, `keepaEnabled=false`, and event-inbox-only configured delivery. Compiled worker registered `execute_operation`, `observe_watch` and `deliver_notification`. Markdown local links and `git diff --check` passed; repository remains non-bare.
 
 64 tests by area: browser runtime/provider 14; transport 4; production registry 3; Postgres store 12; Graphile queue 2; owner UI 1; core money/crypto 4; action proposals 7; Keepa 10; notification adapter 7.
+
+## Acceptance corrections, 2026-09-22
+
+All four architect findings are corrected. Latest full verification passes **69 tests in 12 files**, typecheck and build, using the same `TEST_DATABASE_URL=... npx pnpm@10.32.1 run verify` command above.
+
+- Cart writes check observed line identity, quantity, purchase mode and active/saved container before any select/click. Missing quantity/mode is unknown, never defaulted. Incomplete evidence returns unsupported with zero dispatched effects; postcondition uncertainty remains quarantined only after an actual attempted action.
+- Product history lookup uses stable owner/account/marketplace/product identity across worker restarts. Each encrypted point preserves source timestamps, session generation and delivery provenance. Unverified delivery contexts have separate persisted IDs and are never combined into a quote. Existing product records with a valid ASIN migrate with unknown/unverified legacy provenance.
+- `browser:login` now loads `.env` identically to gateway/worker and uses the same profile resolver. A hermetic subprocess regression verifies custom-profile paths with `--check-config`, without importing the browser runtime or touching the waiting login session.
+- Seller feedback counts parse the explicit numeric/labelled ratings count (120), not the period (30) or positive percentage (98). Missing/invalid counts remain unknown.
+
+Focused reproduction: `TEST_DATABASE_URL=postgres://amazon_mcp:local-development-only@127.0.0.1:55432/amazon_mcp npx pnpm@10.32.1 exec vitest run tests/browser-provider.test.ts tests/login-config.test.ts tests/store.test.ts tests/registry.test.ts`.

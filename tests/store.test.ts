@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
 import { Store } from "../packages/store/index.js";
+import { productHistorySubject } from "../packages/core/observations.js";
 import { NotificationOutbox } from "../packages/store/notifications.js";
 import { Monitoring } from "../packages/store/monitoring.js";
 import { Executor } from "../packages/core/execution.js";
@@ -390,5 +391,35 @@ describe.skipIf(!connection)("Postgres durable operations", () => {
         { currency: "USD", minorUnits: 90 },
       ),
     ).rejects.toThrow("another rule");
+  });
+  it("migrates generation-keyed legacy product history without inventing verified provenance", async () => {
+    const account = await store.account("legacy-history");
+    const monitor = new Monitoring(store);
+    await monitor.record(
+      "legacy-history",
+      account.id,
+      "obsolete-session-digest",
+      "products_get",
+      { asin: "B000000001", price: { currency: "USD", minorUnits: 100 } },
+    );
+    await store.migrate();
+    const subject = productHistorySubject("amazon.com", "B000000001");
+    const points = await monitor.history("legacy-history", account.id, subject);
+    expect(points).toHaveLength(1);
+    expect(points[0]!.provenance).toMatchObject({
+      sessionGeneration: null,
+      sourceObservedAt: null,
+      deliveryContext: { status: "unverified" },
+      productIdentityVerified: false,
+      quoteEligible: false,
+    });
+    await store.migrate();
+    expect(
+      (await monitor.history("legacy-history", account.id, subject))[0]!
+        .provenance?.contextRef,
+    ).toBe(points[0]!.provenance?.contextRef);
+    await expect(monitor.history("other", account.id, subject)).rejects.toThrow(
+      "not found",
+    );
   });
 });

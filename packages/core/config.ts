@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolveAmazonProfileDir } from "./login-config.js";
 export type Config = {
   databaseUrl: string;
   dataKey: string;
@@ -53,7 +53,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ownerToken: env.OWNER_TOKEN!,
     ownerId: env.OWNER_ID ?? "local-owner",
     port,
-    profileDir: resolve(env.AMAZON_PROFILE_DIR ?? ".local/amazon-profile"),
+    profileDir: resolveAmazonProfileDir(env),
     liveEnabled: env.AMAZON_LIVE_ENABLED === "true",
     retainObservations: env.RETAIN_OBSERVATIONS === "true",
   };

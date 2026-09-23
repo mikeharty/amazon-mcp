@@ -52,3 +52,4 @@ CREATE TABLE IF NOT EXISTS notification_deliveries(
 );
 CREATE INDEX IF NOT EXISTS notification_pending ON notification_deliveries(created_at) WHERE status='pending';
 ALTER TABLE watches ADD COLUMN IF NOT EXISTS price_threshold text;
+ALTER TABLE observations ADD COLUMN IF NOT EXISTS provenance text;

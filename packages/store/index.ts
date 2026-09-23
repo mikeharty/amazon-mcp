@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 import pg, { type PoolClient } from "pg";
 import { makeWorkerUtils } from "graphile-worker";
 import { DomainError, type Result } from "../contracts/index.js";
+import {
+  productHistorySubject,
+  type ObservationProvenance,
+} from "../core/observations.js";
 import { Vault, digest } from "./crypto.js";
 export type Account = {
   id: string;
@@ -63,6 +67,58 @@ export class Store {
         "utf8",
       ),
     );
+    // Repair the pre-release generation-keyed history without inventing old context.
+    let after: string | null = null;
+    while (true) {
+      const {
+        rows,
+      }: {
+        rows: Array<{
+          id: string;
+          value: string;
+          owner_id: string;
+          marketplace: "amazon.com";
+        }>;
+      } = await this.pool.query(
+        "SELECT observations.*,accounts.marketplace FROM observations JOIN accounts ON accounts.id=observations.account_id WHERE provenance IS NULL AND kind='products_get' AND ($1::uuid IS NULL OR observations.id>$1::uuid) ORDER BY observations.id LIMIT 100",
+        [after],
+      );
+      if (!rows.length) break;
+      for (const row of rows) {
+        const value = this.vault.open<Record<string, unknown>>(
+          row.value,
+          row.owner_id,
+        );
+        if (
+          !value ||
+          typeof value !== "object" ||
+          typeof value.asin !== "string" ||
+          !/^[A-Z0-9]{10}$/.test(value.asin)
+        )
+          continue;
+        const provenance: ObservationProvenance = {
+          marketplace: row.marketplace,
+          asin: value.asin,
+          sessionGeneration: null,
+          source: "legacy-provider-unrecorded",
+          sourceObservedAt: null,
+          providerContextRef: null,
+          contextRef: `unverified:${row.id}`,
+          deliveryContext: { status: "unverified" },
+          productIdentityVerified: false,
+          quoteEligible: false,
+        };
+        await this.pool.query(
+          "UPDATE observations SET subject=$2,provenance=$3 WHERE id=$1 AND provenance IS NULL",
+          [
+            row.id,
+            productHistorySubject(row.marketplace, value.asin),
+            this.vault.seal(provenance, row.owner_id),
+          ],
+        );
+      }
+      after = rows.at(-1)!.id;
+    }
   }
   async close() {
     await this.pool.end();

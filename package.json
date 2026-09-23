@@ -15,7 +15,7 @@
     "dev": "node --env-file=.env --import tsx apps/gateway/main.ts",
     "worker": "node --env-file=.env --import tsx apps/worker/main.ts",
     "migrate": "node --env-file=.env --import tsx scripts/migrate.ts",
-    "browser:login": "tsx scripts/browser-login.ts",
+    "browser:login": "node --env-file=.env --import tsx scripts/browser-login.ts",
     "local:init": "tsx scripts/setup.ts",
     "mcp:smoke": "node --env-file=.env --import tsx scripts/mcp-smoke.ts"
   },

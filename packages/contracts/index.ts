@@ -11,7 +11,12 @@ export type Result<T = unknown> = {
     | "failed"
     | "outcome_unknown";
   data?: T;
-  observation?: { observedAt: string; source: string; contextRef: string };
+  observation?: {
+    observedAt: string;
+    source: string;
+    contextRef: string;
+    deliveryContextRef?: string;
+  };
   coverage?: { complete: boolean; missing: string[]; reason?: string };
   nextCursor?: string;
   operationId?: string;

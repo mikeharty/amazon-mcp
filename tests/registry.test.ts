@@ -163,5 +163,107 @@ describe.skipIf(!connection)(
         },
       });
     });
+    it("preserves product history across runtime generations with separate point provenance", async () => {
+      const account = await store.account("fixture-owner");
+      let price = 100;
+      const provider = {
+        read: async () => ({
+          status: "ok" as const,
+          data: {
+            asin: "B000000001",
+            price: { currency: "USD", minorUnits: price },
+          },
+          observation: {
+            observedAt: "2026-09-22T12:00:00.000Z",
+            source: "fixture-provider",
+            contextRef: "fixture-account-context",
+          },
+        }),
+        mutate: async () => ({ status: "unsupported" as const }),
+        close: async () => {},
+      };
+      const executor = new Executor(store, provider, "history-worker", true);
+      const first = await store.start(
+        "fixture-owner",
+        account.id,
+        "products_get",
+        "read",
+        { asin: "B000000001" },
+        "history-before",
+      );
+      await executor.run(first.id);
+      const beforeHistory = await client.callTool({
+        name: "prices_history",
+        arguments: { accountRef: account.id, asin: "B000000001" },
+      });
+      const firstContext = (
+        beforeHistory.structuredContent as {
+          data: { items: Array<{ provenance: { contextRef: string } }> };
+        }
+      ).data.items[0]!.provenance.contextRef;
+      await store.pool.query(
+        "UPDATE accounts SET session_generation=session_generation+1 WHERE id=$1",
+        [account.id],
+      );
+      price = 95;
+      const second = await store.start(
+        "fixture-owner",
+        account.id,
+        "products_get",
+        "read",
+        { asin: "B000000001" },
+        "history-after",
+      );
+      await executor.run(second.id);
+      const result = await client.callTool({
+        name: "prices_history",
+        arguments: { accountRef: account.id, asin: "B000000001" },
+      });
+      const data = (
+        result.structuredContent as {
+          data: {
+            items: Array<{
+              provenance: {
+                sessionGeneration: number;
+                contextRef: string;
+                source: string;
+                deliveryContext: { status: string };
+                quoteEligible: boolean;
+              };
+            }>;
+            quoteEligible: boolean;
+          };
+        }
+      ).data;
+      expect(data.items).toHaveLength(2);
+      expect(
+        data.items.some(
+          (point) => point.provenance.contextRef === firstContext,
+        ),
+      ).toBe(true);
+      expect(
+        data.items.map((v) => v.provenance.sessionGeneration).sort(),
+      ).toEqual([account.session_generation, account.session_generation + 1]);
+      expect(new Set(data.items.map((v) => v.provenance.contextRef)).size).toBe(
+        2,
+      );
+      for (const point of data.items)
+        expect(point.provenance).toMatchObject({
+          source: "fixture-provider",
+          sourceObservedAt: "2026-09-22T12:00:00.000Z",
+          deliveryContext: { status: "unverified" },
+          quoteEligible: false,
+        });
+      expect(data.quoteEligible).toBe(false);
+      const foreign = await store.account("different-owner");
+      expect(
+        (
+          await client.callTool({
+            name: "prices_history",
+            arguments: { accountRef: foreign.id, asin: "B000000001" },
+          })
+        ).isError,
+      ).toBe(true);
+    });
   },
 );

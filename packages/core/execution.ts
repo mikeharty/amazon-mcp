@@ -1,6 +1,10 @@
 import type { Result, ShoppingProvider } from "../contracts/index.js";
 import { Store, type Operation } from "../store/index.js";
 import { Monitoring } from "../store/monitoring.js";
+import {
+  productHistorySubject,
+  productObservationProvenance,
+} from "./observations.js";
 import { digest } from "../store/crypto.js";
 export class Executor {
   constructor(
@@ -60,21 +64,22 @@ export class Executor {
       if (
         this.retainObservations &&
         op.mode === "read" &&
+        op.kind === "products_get" &&
         ["ok", "partial"].includes(result.status) &&
         op.input.asin &&
-        result.data
+        result.data &&
+        typeof result.data === "object" &&
+        "asin" in result.data &&
+        result.data.asin === op.input.asin
       ) {
-        // Account and all query inputs are part of the history key.
+        // Runtime generations are provenance, not permanent history partitions.
         await new Monitoring(this.store).record(
           op.owner_id,
           op.account_id,
-          digest({
-            kind: op.kind,
-            input: op.input,
-            session: ctx.sessionGeneration,
-          }),
+          productHistorySubject(ctx.marketplace, String(op.input.asin)),
           op.kind,
           result.data,
+          productObservationProvenance(ctx, String(op.input.asin), result),
         );
       }
     } catch {

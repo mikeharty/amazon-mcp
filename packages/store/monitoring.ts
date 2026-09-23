@@ -1,3 +1,4 @@
+import type { ObservationProvenance } from "../core/observations.js";
 import { randomUUID } from "node:crypto";
 import { DomainError, type Result } from "../contracts/index.js";
 import { Store } from "./index.js";
@@ -287,10 +288,11 @@ export class Monitoring {
     subject: string,
     kind: string,
     value: unknown,
+    provenance?: ObservationProvenance,
   ): Promise<void> {
     await this.store.getAccount(owner, accountId);
     await this.store.pool.query(
-      "INSERT INTO observations(id,owner_id,account_id,subject,kind,value,digest) VALUES($1,$2,$3,$4,$5,$6,$7)",
+      "INSERT INTO observations(id,owner_id,account_id,subject,kind,value,digest,provenance) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
       [
         randomUUID(),
         owner,
@@ -299,6 +301,7 @@ export class Monitoring {
         kind,
         this.store.vault.seal(value, owner),
         digest(value),
+        provenance ? this.store.vault.seal(provenance, owner) : null,
       ],
     );
   }
@@ -313,11 +316,19 @@ export class Monitoring {
       "SELECT * FROM observations WHERE owner_id=$1 AND account_id=$2 AND subject=$3 ORDER BY observed_at DESC LIMIT $4",
       [owner, accountId, subject, Math.max(1, Math.min(limit, 500))],
     );
-    return rows.map((r) => ({
-      observedAt: r.observed_at,
-      source: r.kind,
-      value: this.store.vault.open(r.value, owner),
-    }));
+    return rows.map((r) => {
+      const provenance = r.provenance
+        ? this.store.vault.open<ObservationProvenance>(r.provenance, owner)
+        : null;
+      return {
+        recordedAt: r.observed_at,
+        observedAt: provenance?.sourceObservedAt ?? null,
+        source: provenance?.source ?? "unrecorded-provider",
+        kind: r.kind,
+        provenance,
+        value: this.store.vault.open(r.value, owner),
+      };
+    });
   }
   async purge(before: Date) {
     await this.store.pool.query(
