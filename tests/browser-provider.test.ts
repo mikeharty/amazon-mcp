@@ -269,6 +269,14 @@ describe("Amazon web provider synthetic fixture E2E", () => {
         alter: (html: string) =>
           html.replace(' data-purchase-mode="one_time"', ""),
       },
+      {
+        name: "location",
+        alter: (html: string) =>
+          html.replace(
+            'id="sc-active-cart" data-name="Active Items"',
+            'id="unexpected-cart"',
+          ),
+      },
     ];
     for (const variant of variants) {
       const incompleteContext = await browser.newContext();

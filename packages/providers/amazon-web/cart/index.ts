@@ -59,7 +59,9 @@ export async function extractCart(page: Page) {
               : undefined,
           location: root.closest('[data-name="Saved Items"], #sc-saved-cart')
             ? "saved"
-            : "active",
+            : root.closest('[data-name="Active Items"], #sc-active-cart')
+              ? "active"
+              : undefined,
         };
       }),
     );
