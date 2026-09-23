@@ -131,6 +131,15 @@ describe('MCP HTTP gateway', () => {
     );
     expect(foreignHost.status).toBe(403);
 
+    const mismatchedUrlAndHost = await gateway(
+      new Request('http://evil.example/mcp', {
+        method: 'POST',
+        headers: { authorization: 'Bearer valid', host: 'localhost' },
+        body: rpcBody,
+      }),
+    );
+    expect(mismatchedUrlAndHost.status).toBe(403);
+
     const foreignOrigin = await gateway(
       new Request('http://localhost/mcp', {
         method: 'POST',
@@ -148,6 +157,22 @@ describe('MCP HTTP gateway', () => {
       }),
     );
     expect(oversized.status).toBe(413);
+
+    const chunkedBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('x'.repeat(20)));
+        controller.enqueue(new TextEncoder().encode('x'.repeat(20)));
+        controller.close();
+      },
+    });
+    const chunkedInit: RequestInit & { duplex: 'half' } = {
+        method: 'POST',
+        headers: { authorization: 'Bearer valid', host: 'localhost' },
+        body: chunkedBody,
+        duplex: 'half',
+    };
+    const oversizedChunked = await gateway(new Request('http://localhost/mcp', chunkedInit));
+    expect(oversizedChunked.status).toBe(413);
   });
 
   it('does not expose thrown tool errors to clients', async () => {

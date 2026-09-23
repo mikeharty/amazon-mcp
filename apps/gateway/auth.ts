@@ -22,7 +22,14 @@ export function validateLocalRequest(
   const requestUrl = safelyParseUrl(request.url);
   const hostHeader = parseHostHeader(request.headers.get('host'));
 
-  if (!requestUrl || !hostHeader || !allowed.has(normalizeHostname(hostHeader.hostname))) {
+  if (
+    !requestUrl ||
+    !hostHeader ||
+    !allowed.has(normalizeHostname(requestUrl.hostname)) ||
+    !allowed.has(normalizeHostname(hostHeader.hostname)) ||
+    normalizeHostname(requestUrl.hostname) !== normalizeHostname(hostHeader.hostname) ||
+    normalizedPort(requestUrl.protocol, requestUrl.port) !== normalizedPort(requestUrl.protocol, hostHeader.port)
+  ) {
     return jsonError(403, 'Forbidden');
   }
 
@@ -62,8 +69,31 @@ export async function boundedRequest(
 
   if (request.method === 'GET' || request.method === 'HEAD' || request.body === null) return request;
 
-  const body = await request.arrayBuffer();
-  if (body.byteLength > maxRequestBytes) return jsonError(413, 'Request body too large');
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (byteLength + value.byteLength > maxRequestBytes) {
+        await reader.cancel('Request body too large');
+        return jsonError(413, 'Request body too large');
+      }
+      byteLength += value.byteLength;
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
 
   return new Request(request, { body });
 }
@@ -109,4 +139,11 @@ function safelyParseUrl(value: string): URL | undefined {
 
 function normalizeHostname(hostname: string): string {
   return hostname.replace(/^\[|\]$/g, '').toLowerCase();
+}
+
+function normalizedPort(protocol: string, port: string | undefined): string {
+  if (port) return port;
+  if (protocol === 'http:') return '80';
+  if (protocol === 'https:') return '443';
+  return '';
 }
