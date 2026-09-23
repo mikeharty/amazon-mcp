@@ -1,6 +1,15 @@
-export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+export type Json =
+  null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Result<T = unknown> = {
-  status: 'ok' | 'partial' | 'pending' | 'requires_user_action' | 'unsupported' | 'conflict' | 'failed' | 'outcome_unknown';
+  status:
+    | "ok"
+    | "partial"
+    | "pending"
+    | "requires_user_action"
+    | "unsupported"
+    | "conflict"
+    | "failed"
+    | "outcome_unknown";
   data?: T;
   observation?: { observedAt: string; source: string; contextRef: string };
   coverage?: { complete: boolean; missing: string[]; reason?: string };
@@ -11,11 +20,30 @@ export type Result<T = unknown> = {
 };
 export type Owner = { id: string; scopes: string[] };
 export class DomainError extends Error {
-  constructor(public code: string, message: string, public status: number = 409) { super(message); }
+  constructor(
+    public code: string,
+    message: string,
+    public status: number = 409,
+  ) {
+    super(message);
+  }
 }
-export type ProviderContext = { ownerId: string; accountRef: string; sessionGeneration: number; marketplace: 'amazon.com' };
-export type ProviderRead = (kind: string, input: Record<string, unknown>, context: ProviderContext) => Promise<Result>;
-export type ProviderMutation = (kind: string, terms: Record<string, unknown>, context: ProviderContext) => Promise<Result>;
+export type ProviderContext = {
+  ownerId: string;
+  accountRef: string;
+  sessionGeneration: number;
+  marketplace: "amazon.com";
+};
+export type ProviderRead = (
+  kind: string,
+  input: Record<string, unknown>,
+  context: ProviderContext,
+) => Promise<Result>;
+export type ProviderMutation = (
+  kind: string,
+  terms: Record<string, unknown>,
+  context: ProviderContext,
+) => Promise<Result>;
 export interface ShoppingProvider {
   read: ProviderRead;
   mutate: ProviderMutation;

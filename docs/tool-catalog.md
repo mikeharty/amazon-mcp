@@ -1,5 +1,7 @@
 # Proposed MCP tool and resource catalogue
 
+> Design target. For implemented coverage and current runtime evidence, see [capability ledger](capabilities.md) and [implementation status](IMPLEMENTATION.md).
+
 Proposal, 2026-09-20. Names are contracts to refine in the foundation workstream, not implemented tools. Read this with [requirements.md](requirements.md) and [architecture.md](architecture.md). The full surface is phased; do not advertise an operation as usable until its provider and account capability are verified.
 
 ## Common contract

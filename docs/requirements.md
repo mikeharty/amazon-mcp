@@ -1,5 +1,7 @@
 # Amazon consumer MCP: proposed requirements
 
+> Design target. For implemented coverage and current runtime evidence, see [capability ledger](capabilities.md) and [implementation status](IMPLEMENTATION.md).
+
 Proposal dated 2026-09-20. This is a design for review, not an implementation or a claim of Amazon account access. No personal Amazon session has been inspected. Provider research is in `docs/research/`.
 
 ## Product boundary

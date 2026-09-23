@@ -1,4 +1,4 @@
-import type { Page } from 'playwright';
+import type { Page } from "playwright";
 
 export interface PageReader {
   use<T>(action: (page: Page) => Promise<T>): Promise<T>;

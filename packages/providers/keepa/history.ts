@@ -13,26 +13,34 @@ export type PricePoint = Readonly<{
 }>;
 
 export function keepaTimeToUnixMilliseconds(keepaMinutes: number): number {
-  if (!Number.isSafeInteger(keepaMinutes)) throw new TypeError('Invalid Keepa timestamp');
+  if (!Number.isSafeInteger(keepaMinutes))
+    throw new TypeError("Invalid Keepa timestamp");
   const milliseconds = (keepaMinutes + KEEPA_TIME_OFFSET_MINUTES) * 60_000;
-  if (!Number.isSafeInteger(milliseconds)) throw new TypeError('Keepa timestamp is outside the safe range');
+  if (!Number.isSafeInteger(milliseconds))
+    throw new TypeError("Keepa timestamp is outside the safe range");
   return milliseconds;
 }
 
 export function decodePriceHistory(history: unknown): PricePoint[] {
   if (history === null || history === undefined) return [];
-  if (!Array.isArray(history) || history.length % 2 !== 0) throw new TypeError('Invalid Keepa price history');
+  if (!Array.isArray(history) || history.length % 2 !== 0)
+    throw new TypeError("Invalid Keepa price history");
 
   const points: PricePoint[] = [];
   for (let index = 0; index < history.length; index += 2) {
     const keepaMinutes = history[index];
     const amountMinor = history[index + 1];
-    if (!Number.isSafeInteger(keepaMinutes) || !Number.isSafeInteger(amountMinor)) {
-      throw new TypeError('Invalid Keepa price history point');
+    if (
+      !Number.isSafeInteger(keepaMinutes) ||
+      !Number.isSafeInteger(amountMinor)
+    ) {
+      throw new TypeError("Invalid Keepa price history point");
     }
-    if (amountMinor < -1) throw new TypeError('Unknown Keepa price sentinel');
+    if (amountMinor < -1) throw new TypeError("Unknown Keepa price sentinel");
     points.push({
-      observedAt: new Date(keepaTimeToUnixMilliseconds(keepaMinutes)).toISOString(),
+      observedAt: new Date(
+        keepaTimeToUnixMilliseconds(keepaMinutes),
+      ).toISOString(),
       amountMinor: amountMinor === -1 ? null : amountMinor,
     });
   }

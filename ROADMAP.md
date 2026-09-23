@@ -4,7 +4,7 @@
 
 Build an MCP server for one personal **Amazon.com** account, covering product research, carts, checkout, orders, returns, Subscribe & Save and monitoring. Design for additional regions later. Prefer maintained open-source dependencies; paid integrations remain optional.
 
-**As of 2026-09-21: proposal only.** The repository contains requirements, architecture, research, 53 proposed tools and 49 implementation slices. No application, deployment or live Amazon verification exists. This handoff does not authorize test purchases or other real account commitments.
+**Implementation update, 2026-09-22:** the local gateway, durable worker/core, browser providers and tests now exist. See [README](README.md) for commands and [capability ledger](docs/capabilities.md) for actual coverage and evidence. The 53 tools and 49 slices below remain the broader target; they are not all delivered. Live Amazon verification is still separate, and this roadmap does not authorize test purchases or other real account commitments.
 
 ## Architecture decisions
 

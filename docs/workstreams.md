@@ -1,5 +1,7 @@
 # Execution plan and agent ownership
 
+> Design target. For implemented coverage and current runtime evidence, see [capability ledger](capabilities.md) and [implementation status](IMPLEMENTATION.md).
+
 Proposal, 2026-09-20. This document sequences implementation after review of the proposal. No implementation agents have been launched. Research agents and a High-level design reviewer have only prepared/reviewed documents.
 
 ## Team and integration model

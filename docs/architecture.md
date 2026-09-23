@@ -1,6 +1,8 @@
 # Amazon consumer MCP: architecture proposal
 
-Status: proposed, 2026-09-20. Scope and user preferences are recorded in [requirements.md](requirements.md). Detailed provider evidence is in [research/](research/). No application code, credentials, deployment or Amazon account actions have been created.
+> Design target. For implemented coverage and current runtime evidence, see [capability ledger](capabilities.md) and [implementation status](IMPLEMENTATION.md).
+
+Status: proposed, 2026-09-20. Scope and user preferences are recorded in [requirements.md](requirements.md). Detailed provider evidence is in [research/](research/). This paragraph describes the original proposal baseline. Local application code and private local configuration now exist; current coverage and runtime evidence are in the implementation ledger. No live Amazon account mutation or remote deployment was performed.
 
 ## Decision
 

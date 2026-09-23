@@ -3,10 +3,10 @@ import type {
   ReadResourceResult,
   StandardSchemaWithJSON,
   ToolAnnotations,
-} from '@modelcontextprotocol/server';
-import { createMcpHandler } from 'mcp-handler';
+} from "@modelcontextprotocol/server";
+import { createMcpHandler } from "mcp-handler";
 
-import type { Owner } from '../../packages/contracts/index.js';
+import type { Owner } from "../../packages/contracts/index.js";
 import {
   bearerToken,
   boundedRequest,
@@ -15,7 +15,7 @@ import {
   unauthorizedResponse,
   validateLocalRequest,
   type Authenticate,
-} from './auth.js';
+} from "./auth.js";
 
 export type GatewayContext = Readonly<{
   owner: Owner;
@@ -29,7 +29,10 @@ export type ToolDefinition = Readonly<{
   inputSchema: StandardSchemaWithJSON;
   outputSchema: StandardSchemaWithJSON;
   annotations: ToolAnnotations;
-  handler: (input: unknown, context: GatewayContext) => CallToolResult | Promise<CallToolResult>;
+  handler: (
+    input: unknown,
+    context: GatewayContext,
+  ) => CallToolResult | Promise<CallToolResult>;
 }>;
 
 export type ResourceDefinition = Readonly<{
@@ -38,7 +41,10 @@ export type ResourceDefinition = Readonly<{
   title?: string;
   description?: string;
   mimeType?: string;
-  handler: (uri: URL, context: GatewayContext) => ReadResourceResult | Promise<ReadResourceResult>;
+  handler: (
+    uri: URL,
+    context: GatewayContext,
+  ) => ReadResourceResult | Promise<ReadResourceResult>;
 }>;
 
 export type GatewayOptions = Readonly<{
@@ -50,13 +56,18 @@ export type GatewayOptions = Readonly<{
   serverInfo?: Readonly<{ name: string; version: string }>;
 }>;
 
-export function createGateway(options: GatewayOptions): (request: Request) => Promise<Response> {
+export function createGateway(
+  options: GatewayOptions,
+): (request: Request) => Promise<Response> {
   validateDefinitions(options.tools, options.resources ?? []);
   const maxRequestBytes = options.maxRequestBytes ?? DEFAULT_MAX_REQUEST_BYTES;
 
   return async (incomingRequest: Request): Promise<Response> => {
     try {
-      const localRequestFailure = validateLocalRequest(incomingRequest, options.allowedHosts);
+      const localRequestFailure = validateLocalRequest(
+        incomingRequest,
+        options.allowedHosts,
+      );
       if (localRequestFailure) return localRequestFailure;
 
       if (!bearerToken(incomingRequest)) return unauthorizedResponse();
@@ -74,7 +85,10 @@ export function createGateway(options: GatewayOptions): (request: Request) => Pr
 
       const handler = createMcpHandler(
         (server) => {
-          const context: GatewayContext = Object.freeze({ owner, request: bounded });
+          const context: GatewayContext = Object.freeze({
+            owner,
+            request: bounded,
+          });
 
           for (const tool of options.tools) {
             server.registerTool(
@@ -92,7 +106,7 @@ export function createGateway(options: GatewayOptions): (request: Request) => Pr
                 } catch {
                   return {
                     isError: true,
-                    content: [{ type: 'text', text: 'Tool execution failed' }],
+                    content: [{ type: "text", text: "Tool execution failed" }],
                   };
                 }
               },
@@ -112,21 +126,24 @@ export function createGateway(options: GatewayOptions): (request: Request) => Pr
                 try {
                   return await resource.handler(uri, context);
                 } catch {
-                  throw new Error('Resource read failed');
+                  throw new Error("Resource read failed");
                 }
               },
             );
           }
         },
         {
-          serverInfo: options.serverInfo ?? { name: 'amazon-shopping-mcp', version: '0.1.0' },
+          serverInfo: options.serverInfo ?? {
+            name: "amazon-shopping-mcp",
+            version: "0.1.0",
+          },
           maxSubscriptions: 0,
         },
       );
 
       return await handler(bounded);
     } catch {
-      return jsonError(500, 'Internal server error');
+      return jsonError(500, "Internal server error");
     }
   };
 }
@@ -137,7 +154,8 @@ function validateDefinitions(
 ): void {
   const toolNames = new Set<string>();
   for (const tool of tools) {
-    if (!tool.name || toolNames.has(tool.name)) throw new TypeError(`Duplicate or empty tool name: ${tool.name}`);
+    if (!tool.name || toolNames.has(tool.name))
+      throw new TypeError(`Duplicate or empty tool name: ${tool.name}`);
     toolNames.add(tool.name);
   }
 

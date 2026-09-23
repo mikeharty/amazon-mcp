@@ -4,15 +4,15 @@ export type NotificationEvent = Readonly<{
 }>;
 
 export type DeliveryErrorCode =
-  | 'channel_disabled'
-  | 'unsupported_os'
-  | 'invalid_event'
-  | 'delivery_failed'
-  | 'delivery_timeout'
-  | 'delivery_outcome_unknown';
+  | "channel_disabled"
+  | "unsupported_os"
+  | "invalid_event"
+  | "delivery_failed"
+  | "delivery_timeout"
+  | "delivery_outcome_unknown";
 
 export type DeliveryResult = Readonly<{
-  status: 'sent' | 'failed' | 'outcome_unknown';
+  status: "sent" | "failed" | "outcome_unknown";
   eventId: string;
   error?: Readonly<{
     code: DeliveryErrorCode;
@@ -30,4 +30,4 @@ export {
   MACOS_NOTIFICATION_SCRIPT,
   type ExecRunner,
   type MacOSNotificationOptions,
-} from './macos.js';
+} from "./macos.js";
