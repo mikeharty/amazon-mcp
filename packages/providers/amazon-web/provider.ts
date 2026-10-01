@@ -8,6 +8,7 @@ import {
   BrowserRuntimeError,
   PersistentBrowserRuntime,
   classifyPage,
+  isVerifiedAuthenticatedAmazonPage,
 } from "../../browser-runtime/index.js";
 import { extractCart } from "./cart/index.js";
 import { extractCheckout, prepareCheckout } from "./checkout/index.js";
@@ -60,6 +61,16 @@ export const AMAZON_WEB_MUTATION_KINDS = [
   "cart_move",
 ] as const;
 
+const accountReads = new Set([
+  "cart_get",
+  "orders_list",
+  "orders_get",
+  "shipments_get",
+  "subscriptions_list",
+  "checkout_get",
+  "checkout_prepare",
+]);
+
 type Runner = {
   readonly sessionGeneration?: number;
   run<T>(fn: (page: Page) => Promise<T>): Promise<T>;
@@ -97,6 +108,9 @@ export class AmazonWebProvider implements ShoppingProvider {
           if (state.kind === "challenge")
             return challengeResult(state.challenge, state.url);
         }
+        const authenticated = accountReads.has(kind);
+        if (authenticated && !(await isVerifiedAuthenticatedAmazonPage(page)))
+          return challengeResult("signin", page.url());
         const observedAt = new Date().toISOString();
         const contextRef = context.accountRef || "public";
         let data: unknown;
@@ -152,13 +166,17 @@ export class AmazonWebProvider implements ShoppingProvider {
             data = await extractCart(page);
             break;
           case "orders_list":
-            data = await extractOrders(page);
+            data = { ...(await extractOrders(page)), requestedPage: boundedPage(input.page ?? decodeCursor(input.cursor)) };
             break;
           case "orders_get":
             data = await extractOrder(page, requiredOrderId(input));
             break;
           case "shipments_get":
-            data = await extractShipments(page, requiredOrderId(input));
+            data = await extractShipments(page, requiredOrderId(input), async (url) => {
+              await gotoAndCheck(page, url);
+              if (!await isVerifiedAuthenticatedAmazonPage(page))
+                throw new BrowserRuntimeError("challenge_signin", "Sign in again in the dedicated browser");
+            });
             break;
           case "subscriptions_list":
             data = await extractSubscriptions(page);
@@ -212,7 +230,12 @@ export class AmazonWebProvider implements ShoppingProvider {
         return {
           status: missing.length ? "partial" : "ok",
           data,
-          observation: { observedAt, source: "amazon-web", contextRef },
+          observation: {
+            observedAt,
+            source: "amazon-web",
+            contextRef,
+            ...(authenticated ? { authentication: "verified" as const } : {}),
+          },
           coverage: {
             complete: missing.length === 0,
             missing,
@@ -690,6 +713,12 @@ function completeCartIdentity(
     line.quantity! > 0,
   );
 }
+function completeCartReadIdentity(
+  line: Awaited<ReturnType<typeof extractCart>>["lines"][number],
+): boolean {
+  return Boolean(line.lineRef && line.asin && line.title && line.location &&
+    Number.isInteger(line.quantity) && line.quantity! > 0);
+}
 function sameCartIdentity(
   a: Awaited<ReturnType<typeof extractCart>>["lines"][number],
   b: Awaited<ReturnType<typeof extractCart>>["lines"][number],
@@ -844,6 +873,7 @@ function missingCoverage(kind: string, data: any): string[] {
     "deals_search",
     "orders_list",
     "subscriptions_list",
+    "shipments_get",
   ]);
   if (nonExhaustive.has(kind)) missing.push("source_completeness");
   if (kind === "products_search" && data.items.length === 0)
@@ -883,18 +913,41 @@ function missingCoverage(kind: string, data: any): string[] {
     kind === "cart_get" &&
     data.lines?.some(
       (line: Awaited<ReturnType<typeof extractCart>>["lines"][number]) =>
-        !completeCartIdentity(line),
+        !completeCartReadIdentity(line),
     )
   )
     missing.push("required:cart_line_identity");
+  if (kind === "cart_get" && data.lines?.some(
+    (line: Awaited<ReturnType<typeof extractCart>>["lines"][number]) => !completeCartIdentity(line),
+  )) missing.push("cart_mutation_evidence");
+  if (kind === "cart_get" && data.lines?.every(
+    (line: Awaited<ReturnType<typeof extractCart>>["lines"][number]) => line.location !== "active",
+  ) && !data.activeCartEmpty) missing.push("required:active_cart_state");
   if (kind === "orders_list" && !data.recognized)
     missing.push("required:orders_marker");
+  if (kind === "orders_list" && data.unparsedCount > 0)
+    missing.push("required:order_identity");
+  if (kind === "orders_list" &&
+    ((data.pagination?.currentPage !== undefined && data.pagination.currentPage !== data.requestedPage) ||
+      (data.requestedPage > 1 && data.pagination?.currentPage === undefined)))
+    missing.push("required:orders_page");
+  if (kind === "orders_list" && data.orders?.some((order: any) => !order.date || !order.total || !order.lines?.length))
+    missing.push("order_fields");
   if (kind === "orders_get" && !data.found)
     missing.push("required:order_identity");
+  if (kind === "orders_get" && data.found && (!data.date || !data.total || !data.lines?.length))
+    missing.push("order_fields");
   if (kind === "shipments_get" && !data.orderIdentityObserved)
     missing.push("required:order_identity");
+  if (kind === "shipments_get" && data.orderIdentityObserved && !data.shipments?.length)
+    missing.push("required:shipments");
+  if (kind === "shipments_get" && data.shipments?.some((shipment: any) => shipment.trackingAvailable &&
+    (!shipment.tracking?.recognized || !shipment.tracking?.orderIdentityObserved || !shipment.tracking?.status)))
+    missing.push("tracking_details");
   if (kind === "subscriptions_list" && !data.recognized)
     missing.push("required:subscriptions_marker");
+  if (kind === "subscriptions_list" && data.unparsedCount > 0)
+    missing.push("required:subscription_identity");
   if (kind === "checkout_get" || kind === "checkout_prepare") {
     const quote = kind === "checkout_prepare" ? data.checkout : data;
     if (!quote?.recognized) missing.push("required:checkout_marker");

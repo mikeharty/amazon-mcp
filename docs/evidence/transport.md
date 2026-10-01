@@ -50,3 +50,9 @@ Calling that function with the Store's existing `pg.PoolClient` gives one databa
 Library-mode startup is `run({ pgPool, taskList, noHandleSignals: true })`. Orderly shutdown is `await runner.stop(reason)` followed by `await runner.promise`. Graphile periodically recovers abandoned locks after process loss. `forceUnlockWorkers(workerIds)` is documented only for workers confirmed dead, never for normal restart or a possibly live worker. A task receives `helpers.abortSignal` during graceful shutdown. If a consequential browser effect might already have been dispatched, that abort must transition the application operation to `outcome_unknown` for reconciliation rather than causing an automatic replay.
 
 These findings are package/API validation only. Named-queue serialization, stale-lock timing, crash restart, cron backfill, and schema upgrades still require a live Postgres integration test before transactional Amazon actions are enabled.
+
+## Operational discovery and recovery, 2026-09-30 Pacific
+
+After updating the local gateway, the official SDK client at 2026-10-01 05:34 UTC discovered 37 tools and three resources (`amazon://guide`, `amazon://status`, `amazon://events`). Server workflow instructions were available. The client read both new resources and retrieved two pages of operation metadata with distinct handles and no private inputs/results. `local:doctor` exited 0: worker online, no queued/active/uncertain jobs. This establishes local service health only; it did not contact Amazon or verify current authentication.
+
+The full test run passed 147 tests in 17 files, typecheck/build and nine compiled Chromium fixture checks. New real Postgres tests cover owner isolation, encrypted cursor tampering and changed filters, timestamp precision, payload exclusion, stale queue/worker findings and diagnostics without account-creation side effects. Recovery guidance does not perform recovery or replay any operation.

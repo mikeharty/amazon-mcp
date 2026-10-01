@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS audit(
  created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS worker_health(id text PRIMARY KEY, heartbeat_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS operations_owner_recent ON operations(owner_id,created_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS operations_owner_account_status ON operations(owner_id,account_id,status);
 INSERT INTO schema_migrations(version) VALUES ('001') ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS notification_deliveries(

@@ -67,3 +67,62 @@ All four architect findings are corrected. Latest full verification passes **69 
 - Seller feedback counts parse the explicit numeric/labelled ratings count (120), not the period (30) or positive percentage (98). Missing/invalid counts remain unknown.
 
 Focused reproduction: `TEST_DATABASE_URL=postgres://amazon_mcp:local-development-only@127.0.0.1:55432/amazon_mcp npx pnpm@10.32.1 exec vitest run tests/browser-provider.test.ts tests/login-config.test.ts tests/store.test.ts tests/registry.test.ts`.
+
+## Authenticated-read verification milestone, 2026-09-27
+
+- Added `pnpm run amazon:smoke`: preflight plus sequential cart, first-page order-history and subscription reads through the SDK and durable operation registry. Each read has a 60-second deadline. Human challenges stop the batch; missing required page evidence fails verification.
+- Account reads now check a visible signed-in Amazon navigation greeting and report that evidence in observation metadata. Synthetic tests reject missing, hidden, generic and signed-out greetings before extracting account data.
+- Reports under ignored `.local/evidence/` have mode 0600 and include only timestamps, opaque operation handles, counts and known coverage labels. Raw account data, response text, URLs, credentials and error messages are excluded.
+- Full verification on Node 26.0.0 with Postgres enabled: **84 tests in 13 files passed**, typecheck and production build passed. Command: `TEST_DATABASE_URL=postgres://amazon_mcp:local-development-only@127.0.0.1:55432/amazon_mcp PATH="/opt/homebrew/opt/node@26/bin:$PATH" npm exec --yes --package=pnpm@10.32.1 -- pnpm run verify`.
+- Ran the compiled account-read checker against a temporary local gateway with live access disabled. It exited 2 with `live_disabled`, saved a mode-0600 report and dispatched zero account reads. The temporary gateway was stopped afterward.
+- Dedicated login was opened for human completion. Authenticated live reads remain pending; no live cart edits, purchases, returns, cancellations or subscription changes were performed. Keepa and retained product history remain disabled.
+
+### Login retry and headless operation
+
+- Login starts at Amazon's account page and keeps the same browser open after an incomplete check. EOF or a handled interrupt closes the browser and releases the profile lock.
+- The worker now uses configurable `AMAZON_HEADLESS` (default `true`); interactive login stays visible. Both modes use the full bundled Chromium channel and the same dedicated persistent profile.
+- A synthetic persistent-cookie regression verifies session retention across headless restarts. A separate handoff regression verifies that a failed sign-in check can be retried in the same window. Full verification now passes **86 tests in 13 files**, typecheck and build.
+- 1Password CLI is installed locally, but Amazon credential retrieval and autofill integration have not been implemented or verified. The documented recommendation is a visible 1Password-assisted login followed by headless reuse of the dedicated session.
+
+### 1Password login implementation, 2026-09-28
+
+- Added `browser:login:1password`: local `op` selection by Amazon website, optional exact item/vault configuration, username/password retrieval in memory, and one bounded password submission. Ambiguity, unknown destinations, MFA, passkeys, CAPTCHA, and unverified password-only screens stop for human completion. No credentials, raw authentication errors, screenshots or traces are logged.
+- The login helper handles the currently observed JavaScript sign-in navigation, wrapped Continue input and Amazon email-claim form. It checks readiness automatically and persists the dedicated session for the headless worker after successful authentication.
+- Disabled Playwright's process-exiting signal handlers so the caller can close Chromium and release its ownership lock. Verified Ctrl-C and immediate profile reuse live; added a real subprocess SIGINT regression.
+- Full verification passed **109 tests in 15 files**, typecheck and build. Signed-out visible/headless login navigation was observed. The 1Password app is locked and the CLI request timed out; credential retrieval and authenticated Amazon/headless reads remain pending. No live cart edits or paid calls were performed.
+- Follow-up: 1Password CLI access was authorized and Amazon item metadata was retrieved successfully. Two matching items triggered the ambiguity guard before any credentials were requested; explicit item selection is pending. Database preflight found no queued/running/uncertain operations or watches.
+
+### Personal account and live headless verification, 2026-09-28 Pacific
+
+- Selected the owner-requested Personal vault Amazon item in private local configuration. The dedicated browser had finished human sign-in; reopening it verified the session without submitting a password. A separate headless restart verified authentication at 2026-09-29 02:09:34 UTC.
+- Actual MCP/Graphile reads observed 7 cart lines with incomplete identity evidence, 10 first-page order records, and an unrecognized subscription page. The report correctly remained incomplete. All three observations verified authentication; no mutations or paid calls occurred.
+- Fixed the live `tsx`/Playwright callback failure by making worker/login commands build and run compiled JavaScript. Added three compiled-browser fixture checks to `verify`.
+- Fixed verification polling for absent pending results and the actual `working` journal status. Added a missing-terminal-result regression and made the HTTP/SDK integration return a real queued response before completion.
+- Remaining live compatibility work: full cart identity evidence, the optional subtotal selector delay, order field completeness, and subscription recognition. The temporary services were stopped after inspection; live access remains default-off in private `.env`.
+- Final verification passed **110 tests in 15 files**, typecheck, build, and **3 compiled Chromium fixture checks**. The dedicated profile lock was released and the temporary gateway was no longer listening after cleanup.
+
+### Completed live account reads and password submission, 2026-09-28 Pacific
+
+- Cart extraction now reads saved-item quantity from its rendered row attribute, recognizes an explicitly empty active cart, and avoids waiting for an intentionally absent subtotal. Read identity and mutation evidence are reported separately; exact seller/condition/purchase-mode mutation guards are unchanged.
+- Subscription extraction recognizes the live modern grid, validates identity from each rendered tile's edit destination, and reads visible quantity/frequency/next-delivery labels. It does not request the AJAX destination or read embedded client state. Unknown/empty layouts remain conservative.
+- The real MCP/Graphile read batch completed at 04:38:22–04:38:28 UTC on September 29: seven saved cart items, ten first-page orders and four subscriptions, all authenticated and recognized. Source completeness and missing cart mutation evidence remain explicit. No live mutation, watch or paid call was dispatched.
+- Live 1Password retrieval handles renamed built-in field labels by stable field ID. The password form at Amazon's `/ax/claim` now works while password submission remains restricted to HTTPS Amazon `/ap/signin`. A single automated password submission reached the authenticator-code step in a separate profile; human MFA completion is pending. The primary working session remains intact.
+- Full verification: **122 tests in 15 files**, typecheck/build passed with real Postgres suites enabled; **six compiled Chromium fixtures** passed, including the modern cart/subscription layouts and email-claim password flow.
+
+### Live order details and split-shipment tracking, 2026-09-28 Pacific
+
+- Fixed current history date/total extraction and returned observed pagination metadata. Mismatched or unverified requested pages produce explicit missing coverage.
+- Added the live order-detail layout, labeled exact order identity, displayed grand total, scoped document/action labels and split-shipment item mapping. An unrelated order number elsewhere in the page no longer establishes shipment identity.
+- Shipment reads follow at most five displayed Amazon tracking links for the requested order. Each page revalidates authentication, order/package identity and a visible order-info link. Both observed tracking wrappers are supported; future milestones retain their incomplete state. Tracking URLs and private navigation parameters are not returned.
+- Added `amazon:smoke --order-details`, which selects an observed order and verifies details and tracking without recording its order number. Empty history produces `no_order_available` instead of a fabricated identifier.
+- Actual five-read MCP/Graphile batch completed at 04:59:47–05:00:00 UTC on September 29: cart, orders, subscriptions, one two-item order and both of its shipment tracking pages. A separate page-two read returned nine more records with dates/totals and observed page 2. No external account mutation, paid call or watch was dispatched.
+- Full verification passed **141 tests in 16 files**, typecheck/build with real Postgres enabled, and **nine compiled Chromium fixtures**. The gateway and updated headless worker remain running; the private default live-access flag remains off outside those process overrides.
+
+### Operational diagnostics and client recovery, 2026-09-30 Pacific
+
+- Added `amazon_diagnostics` and `amazon://status`: read-only local account flags, worker heartbeat, owner-scoped queue counts, latest operation metadata and explicit recovery guidance. The result distinguishes local availability from Amazon authentication and does not decrypt payloads, contact Amazon, retry work or clear quarantine.
+- Added `operations_list` with account/kind/mode/status filters, bounded page size and encrypted cursors bound to the owner and filters. Creation-time/ID keyset pagination preserves Postgres microsecond precision. Metadata history excludes private inputs, results and idempotency keys. Added supporting indexes using idempotent migrations.
+- Added server workflow instructions and `amazon://guide`, covering durable polling, lost handles, coverage, authentication handoffs, cart identity and notification workflows. Both metadata tools carry read-only, closed-world annotations.
+- Added `pnpm run local:doctor [--json]` with bounded local MCP requests, redacted failure output and meaningful exit codes. No Amazon or 1Password access is required.
+- Verification: **147 tests in 17 files**, typecheck/build and **nine compiled Chromium fixtures** passed with real Postgres enabled. Tests cover owner isolation, cursor tampering and filter changes, precise pagination, read-only diagnostics and actual MCP discovery/resources/instructions.
+- After restarting the gateway, a local SDK smoke at 2026-10-01 05:34 UTC discovered **37 tools and three resources**, read the workflow instructions/status resource, and recovered two distinct pages of operation metadata. `local:doctor` exited 0 with an online worker and zero queued, active or uncertain operations. No Amazon request or external mutation was made by these checks.

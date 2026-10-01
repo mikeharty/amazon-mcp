@@ -1,6 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Page } from "playwright";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BrowserRuntimeError,
@@ -17,6 +20,33 @@ afterEach(async () => {
 });
 
 describe("persistent browser runtime", () => {
+  it("allows the caller to close the browser and release its lock on SIGINT", async () => {
+    const root = await mkdtemp(join(tmpdir(), "amazon-mcp-interrupt-"));
+    temporary.push(root);
+    const profileDir = join(root, "profile");
+    const source = new URL("../packages/browser-runtime/index.ts", import.meta.url).href;
+    const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
+      import { PersistentBrowserRuntime } from ${JSON.stringify(source)};
+      const runtime = new PersistentBrowserRuntime({ profileDir: ${JSON.stringify(profileDir)}, headless: true });
+      process.once("SIGINT", async () => { await runtime.close(); process.exitCode = 0; });
+      await runtime.start();
+      process.stdout.write("ready");
+    `], { stdio: ["ignore", "pipe", "pipe"] });
+    try {
+      const closed = once(child, "exit");
+      const first = await Promise.race([
+        once(child.stdout!, "data").then(([data]) => String(data)),
+        closed.then(() => "exited-before-ready"),
+      ]);
+      expect(first).toBe("ready");
+      child.kill("SIGINT");
+      expect(await closed).toEqual([0, null]);
+      await expect(access(`${profileDir}.amazon-mcp-owner`)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }
+  }, 15_000);
+
   it("serializes operations and fences a profile to one live owner", async () => {
     const root = await mkdtemp(join(tmpdir(), "amazon-mcp-runtime-"));
     temporary.push(root);
@@ -65,6 +95,13 @@ describe("persistent browser runtime", () => {
       await page.goto("https://www.amazon.com/gp/css/homepage.html");
     });
     const handoff = await runtime.beginHandoff();
+    await expect(runtime.assistPasswordLogin(handoff.generation + 1, async () => {
+      throw new Error("Credentials must not be requested for a stale generation");
+    })).rejects.toMatchObject({ code: "stale_generation" });
+    expect(await runtime.assistPasswordLogin(handoff.generation, async () => {
+      throw new Error("Credentials must not be requested on an account page");
+    })).toBe("manual");
+    expect(runtime.isPaused).toBe(true);
     await expect(runtime.run(async () => true)).rejects.toMatchObject({
       code: "handoff_in_progress",
     });
@@ -93,6 +130,97 @@ describe("persistent browser runtime", () => {
       }),
     );
     await runtime.close();
+  });
+
+  it("retains a synthetic session across headless restarts of the dedicated profile", async () => {
+    const root = await mkdtemp(join(tmpdir(), "amazon-mcp-headless-session-"));
+    temporary.push(root);
+    const options = { profileDir: join(root, "profile"), headless: true };
+    const first = new PersistentBrowserRuntime(options);
+    await first.start();
+    try {
+      await first.run(async (page) => {
+        await page.context().addCookies([
+          {
+            name: "fixture-session",
+            value: "synthetic-only",
+            domain: "www.amazon.com",
+            path: "/",
+            secure: true,
+            httpOnly: true,
+            expires: Math.floor(Date.now() / 1000) + 3600,
+          },
+        ]);
+      });
+    } finally {
+      await first.close();
+    }
+    const restarted = new PersistentBrowserRuntime(options);
+    await restarted.start();
+    try {
+      const cookies = await restarted.run((page) =>
+        page.context().cookies("https://www.amazon.com"),
+      );
+      expect(cookies).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "fixture-session",
+            value: "synthetic-only",
+            httpOnly: true,
+          }),
+        ]),
+      );
+    } finally {
+      await restarted.close();
+    }
+  });
+
+  it("keeps the same handoff open after an incomplete sign-in and accepts a later retry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "amazon-mcp-login-retry-"));
+    temporary.push(root);
+    const runtime = new PersistentBrowserRuntime({
+      profileDir: join(root, "profile"),
+      headless: true,
+    });
+    await runtime.start();
+    try {
+      let tab!: Page;
+      await runtime.run(async (page) => {
+        tab = page;
+        await page.route("**/*", (route) =>
+          route.fulfill({
+            contentType: "text/html",
+            body: '<title>Account</title><span id="nav-link-accountList-nav-line-1">Hello, sign in</span>',
+          }),
+        );
+        await page.goto("https://www.amazon.com/gp/css/homepage.html");
+      });
+      const handoff = await runtime.beginHandoff();
+      expect((await runtime.completeHandoff(handoff.generation)).kind).toBe(
+        "challenge",
+      );
+      expect(runtime.status()).toMatchObject({
+        running: true,
+        paused: true,
+        sessionGeneration: 0,
+      });
+      // Simulate the human finishing authentication in the still-open fixture tab.
+      await tab
+        .locator("#nav-link-accountList-nav-line-1")
+        .evaluate((element) => {
+          element.textContent = "Hello, Fixture";
+        });
+      expect((await runtime.completeHandoff(handoff.generation)).kind).toBe(
+        "ready",
+      );
+      expect(runtime.status()).toMatchObject({
+        running: true,
+        paused: false,
+        sessionGeneration: 1,
+      });
+    } finally {
+      await runtime.close();
+    }
   });
 
   it("never steals a stale owner lock automatically", async () => {

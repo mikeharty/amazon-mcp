@@ -12,6 +12,7 @@ import { Executor } from "../packages/core/execution.js";
 import { createRegistry, cartWriteSchemas } from "../apps/gateway/registry.js";
 import { createGateway } from "../apps/gateway/transport.js";
 import { serve } from "../apps/gateway/server.js";
+import { verifyAccountReads } from "../packages/core/read-verification.js";
 const connection = process.env.TEST_DATABASE_URL;
 describe.skipIf(!connection)(
   "Production registry via real HTTP and database",
@@ -114,6 +115,24 @@ describe.skipIf(!connection)(
         ).isError,
       ).toBe(true);
     });
+    it("exposes recovery tools, local health resources and workflow instructions through MCP", async () => {
+      const account = await store.account("fixture-owner");
+      const tools = (await client.listTools()).tools;
+      for (const name of ["amazon_diagnostics", "operations_list"]) {
+        expect(tools.find((t) => t.name === name)?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
+      }
+      const history = await client.callTool({ name: "operations_list", arguments: { accountRef: account.id, limit: 1 } });
+      expect(history.structuredContent).toMatchObject({ status: "ok", data: { operations: expect.any(Array) } });
+      const diagnostics = await client.callTool({ name: "amazon_diagnostics", arguments: {} });
+      expect(diagnostics.structuredContent).toMatchObject({ status: "ok", data: { authentication: "not_checked", account: { accountRef: account.id } } });
+      const resources = (await client.listResources()).resources;
+      expect(resources.map((r) => r.uri)).toEqual(expect.arrayContaining(["amazon://guide", "amazon://status"]));
+      const guide = await client.readResource({ uri: "amazon://guide" });
+      expect(guide.contents[0]).toMatchObject({ mimeType: "text/markdown", text: expect.stringContaining("operations_list") });
+      const health = await client.readResource({ uri: "amazon://status" });
+      expect(health.contents[0]).toMatchObject({ mimeType: "application/json", text: expect.stringContaining('"authentication":"not_checked"') });
+      expect(client.getInstructions()).toContain("operations_list");
+    });
     it("checks scope and exact cart schema before enqueueing side effects", async () => {
       const account = await store.account("fixture-owner");
       const denied = await client.callTool({
@@ -162,6 +181,62 @@ describe.skipIf(!connection)(
           draft: { userText: text, executor: "owner_handoff_only" },
         },
       });
+    });
+    it("verifies three durable account reads through the SDK without queueing writes", async () => {
+      await store.heartbeat("read-verification-worker");
+      const executor = new Executor(
+        store,
+        {
+          read: async (kind) => ({
+            status: "partial",
+            data: {
+              recognized: true,
+              [kind === "cart_get"
+                ? "lines"
+                : kind === "orders_list"
+                  ? "orders"
+                  : "subscriptions"]: [],
+            },
+            observation: {
+              source: "amazon-web",
+              authentication: "verified",
+              observedAt: new Date().toISOString(),
+              contextRef: "fixture",
+            },
+            coverage: { complete: false, missing: ["source_completeness"] },
+          }),
+          mutate: async () => {
+            throw new Error("Read verification must never mutate");
+          },
+          close: async () => {},
+        },
+        "read-verification-worker",
+      );
+      const report = await verifyAccountReads(async (name, args, signal) => {
+        const result = await client.callTool(
+          { name, arguments: args },
+          { signal },
+        );
+        const envelope = result.structuredContent as { data?: { id: string; status: string } };
+        // Return the first real queued response before completing the job, so
+        // polling must tolerate JSON omitting the not-yet-available result.
+        if (name === "operations_get" && envelope.data?.status === "queued")
+          await executor.run(envelope.data.id);
+        return result.structuredContent;
+      });
+      expect(report.status).toBe("completed");
+      expect(report.checks.map((check) => check.tool)).toEqual([
+        "cart_get",
+        "orders_list",
+        "subscriptions_list",
+      ]);
+      expect(
+        (
+          await store.pool.query(
+            "SELECT count(*) FROM operations WHERE mode <> 'read'",
+          )
+        ).rows[0].count,
+      ).toBe("0");
     });
     it("preserves product history across runtime generations with separate point provenance", async () => {
       const account = await store.account("fixture-owner");

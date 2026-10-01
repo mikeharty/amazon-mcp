@@ -8,6 +8,8 @@ import {
 } from "../../packages/contracts/index.js";
 import { Store } from "../../packages/store/index.js";
 import { Monitoring } from "../../packages/store/monitoring.js";
+import { OperationQueries, operationListInput } from "../../packages/store/operations.js";
+import { SERVER_INSTRUCTIONS, WORKFLOW_GUIDE } from "./guide.js";
 import { productHistorySubject } from "../../packages/core/observations.js";
 import { prepareUserDraft } from "../../packages/core/action-proposals.js";
 import { compareOffers } from "../../packages/core/comparison.js";
@@ -139,6 +141,7 @@ export function createRegistry(
   },
 ) {
   const monitoring = new Monitoring(store);
+  const operationQueries = new OperationQueries(store);
   const tools: ToolDefinition[] = [];
   const add = (
     name: string,
@@ -160,6 +163,9 @@ export function createRegistry(
         openWorldHint: ![
           "products_compare",
           "operations_get",
+          "operations_list",
+          "amazon_diagnostics",
+          "amazon_capabilities",
           "events_list",
           "prices_history",
         ].includes(name),
@@ -208,7 +214,7 @@ export function createRegistry(
           accountEnabled: a.enabled,
           workerOnline: await store.workerHealth(),
           liveEnabled: options.liveEnabled,
-          verification: "fixture-verified; live account verification pending",
+          verification: "fixture-verified; run amazon:smoke for current account read evidence",
           notificationChannels: options.desktopNotifications
             ? ["event-inbox", "macos-desktop"]
             : ["event-inbox"],
@@ -295,6 +301,18 @@ export function createRegistry(
         return { status: "pending", operationId: op.id };
       },
     );
+  add(
+    "amazon_diagnostics",
+    "Inspect local account access, service-wide worker heartbeat, owner-scoped queue and recovery steps. Does not contact Amazon, verify sign-in, retry operations or alter account state.",
+    z.object({}).strict(), "account:read", true,
+    async (_, owner) => ({ status: "ok", data: await operationQueries.diagnostics(owner.id, options.liveEnabled) }),
+  );
+  add(
+    "operations_list",
+    "Recover durable job handles after a disconnect. Returns owner-scoped metadata only, newest first, with filters and an opaque nextCursor. Use the same filters on subsequent pages; fetch results with operations_get. Does not retry jobs or list Amazon orders.",
+    operationListInput, "account:read", true,
+    async (input, owner) => ({ status: "ok", data: await operationQueries.list(owner.id, input) }),
+  );
   add(
     "operations_get",
     "Read owner-scoped durable progress/result. Unknown outcomes must not be retried as a new purchase.",
@@ -654,6 +672,22 @@ export function createRegistry(
   );
   const resources: ResourceDefinition[] = [
     {
+      name: "workflow-guide", uri: "amazon://guide", title: "Amazon MCP workflow guide",
+      description: "Polling, recovery, research, tracking, coverage and notification workflows", mimeType: "text/markdown",
+      handler: async (uri, ctx) => {
+        if (!ctx.owner.scopes.includes("account:read")) throw new DomainError("FORBIDDEN", "Read scope required", 403);
+        return { contents: [{ uri: uri.toString(), mimeType: "text/markdown", text: WORKFLOW_GUIDE }] };
+      },
+    },
+    {
+      name: "local-status", uri: "amazon://status", title: "Local service health",
+      description: "Owner-scoped local diagnostics; no Amazon request or sign-in verification", mimeType: "application/json",
+      handler: async (uri, ctx) => {
+        if (!ctx.owner.scopes.includes("account:read")) throw new DomainError("FORBIDDEN", "Read scope required", 403);
+        return { contents: [{ uri: uri.toString(), mimeType: "application/json", text: JSON.stringify(await operationQueries.diagnostics(ctx.owner.id, options.liveEnabled)) }] };
+      },
+    },
+    {
       name: "event-inbox",
       uri: "amazon://events",
       description: "Owner-scoped persisted notification inbox",
@@ -673,5 +707,5 @@ export function createRegistry(
       },
     },
   ];
-  return { tools, resources };
+  return { tools, resources, instructions: SERVER_INSTRUCTIONS };
 }

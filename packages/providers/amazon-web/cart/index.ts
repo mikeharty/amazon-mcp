@@ -23,7 +23,8 @@ export async function extractCart(page: Page) {
             ?.value ??
           root.querySelector<HTMLInputElement>('input[name*="quantity"]')
             ?.value ??
-          text(".a-dropdown-prompt");
+          text(".a-dropdown-prompt") ??
+          root.dataset.quantity;
         const purchaseModeElement = root.querySelector<HTMLElement>(
           '[data-purchase-mode][aria-checked="true"], [data-purchase-mode].selected',
         );
@@ -65,13 +66,17 @@ export async function extractCart(page: Page) {
         };
       }),
     );
-  const subtotalText = await page
-    .locator(
+  // Optional amounts are often absent on an empty cart. Do not auto-wait for
+  // a selector that the page intentionally omits.
+  const { subtotalText, activeCartEmpty } = await page.evaluate(() => ({
+    subtotalText: document.querySelector(
       '#sc-subtotal-amount-activecart, [data-name="Subtotals"] .a-price .a-offscreen',
-    )
-    .first()
-    .textContent()
-    .catch(() => null);
+    )?.textContent ?? null,
+    activeCartEmpty: Array.from(document.querySelectorAll("h1,h2,h3")).some(
+      (node) => (node as HTMLElement).getClientRects().length > 0 &&
+        /^your amazon cart is empty[.!]?$/i.test(node.textContent?.trim() ?? ""),
+    ),
+  }));
   const warnings = await page
     .locator(
       ".sc-list-item-content .a-alert-content, #sc-active-cart .a-alert-content",
@@ -119,6 +124,7 @@ export async function extractCart(page: Page) {
     .slice(0, 24);
   return {
     recognized,
+    activeCartEmpty,
     revision,
     lines,
     subtotal: money(subtotalText),

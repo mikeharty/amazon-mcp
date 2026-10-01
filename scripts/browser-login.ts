@@ -1,5 +1,6 @@
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { sep } from "node:path";
+import { createInterface } from "node:readline";
 import { resolveAmazonProfileDir } from "../packages/core/login-config.js";
 
 const profileDir = resolveAmazonProfileDir();
@@ -9,13 +10,21 @@ rejectNormalBrowserProfile(profileDir);
 if (process.argv.slice(2).includes("--check-config")) {
   process.stdout.write(`${profileDir}\n`);
 } else {
-  await login(profileDir, marker);
+  try {
+    await login(profileDir, marker);
+  } catch {
+    // Browser errors can include sign-in URLs and filled values.
+    process.stderr.write("Amazon login could not finish. Check that no worker owns the dedicated profile, then retry. No credential details were logged.\n");
+    process.exitCode = 1;
+  }
 }
 
 async function login(profileDir: string, marker: string): Promise<void> {
-  const { PersistentBrowserRuntime } = await import(
-    "../packages/browser-runtime/index.js"
-  );
+  // Playwright debug output can contain values passed to fill().
+  delete process.env.DEBUG;
+  delete process.env.PWDEBUG;
+  const { PersistentBrowserRuntime } =
+    await import("../packages/browser-runtime/index.js");
   const initialSessionGeneration = await ensureDedicatedProfile(
     profileDir,
     marker,
@@ -34,33 +43,82 @@ async function login(profileDir: string, marker: string): Promise<void> {
       );
     },
   });
-  await runtime.start();
-  const handoff = await runtime.beginHandoff("https://www.amazon.com/ap/signin");
-
-  process.stdout.write(
-    [
-      `Dedicated Amazon profile: ${profileDir}`,
-      "Complete sign-in, MFA, or any challenge directly in the visible Amazon window.",
-      "Credentials and cookies are not read or copied by this script.",
-      "When the Amazon home/account page is ready, return here and press Enter.",
-    ].join("\n") + "\n",
-  );
-
-  await new Promise<void>((resolveInput) =>
-    process.stdin.once("data", () => resolveInput()),
-  );
-  const state = await runtime.completeHandoff(handoff.generation);
-  if (state.kind === "challenge") {
-    process.stderr.write(
-      `Login remains incomplete: ${state.challenge}. The dedicated profile was kept for another attempt.\n`,
+  const input = createInterface({ input: process.stdin, terminal: false });
+  const lines = input[Symbol.asyncIterator]();
+  const abort = new AbortController();
+  const stop = () => { abort.abort(); input.close(); };
+  let checkTimer: ReturnType<typeof setInterval> | undefined;
+  let checking: Promise<void> | undefined;
+  let completed = false;
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  process.once("SIGHUP", stop);
+  try {
+    await runtime.start();
+    if (abort.signal.aborted) { process.exitCode = 2; return; }
+    // Let Amazon construct its sign-in URL and return destination. A bare
+    // /ap/signin URL can leave the owner on an incomplete sign-in flow.
+    const handoff = await runtime.beginHandoff(
+      "https://www.amazon.com/gp/css/homepage.html",
     );
-    await runtime.close();
-    process.exitCode = 2;
-  } else {
+    const finishIfReady = async (): Promise<boolean> => {
+      const state = await runtime.completeHandoff(handoff.generation);
+      if (state.kind === "challenge") return false;
+      completed = true;
+      process.stdout.write(`Amazon browser session is ready. Session generation: ${runtime.sessionGeneration}.\n`);
+      return true;
+    };
+    if (await finishIfReady()) return;
+    if (process.argv.slice(2).includes("--1password")) {
+      const { readAmazonLogin, OnePasswordError } = await import("../packages/core/onepassword.js");
+      process.stdout.write("Requesting the Amazon login from 1Password. Unlock the app and approve its CLI prompt if needed.\n");
+      try {
+        const result = await runtime.assistPasswordLogin(handoff.generation, () => readAmazonLogin({
+          item: process.env.AMAZON_1PASSWORD_ITEM,
+          vault: process.env.AMAZON_1PASSWORD_VAULT,
+          signal: abort.signal,
+        }));
+        process.stdout.write(result === "submitted"
+          ? "Password sign-in submitted once. Checking the session.\n"
+          : "This sign-in screen needs manual interaction.\n");
+      } catch (error) {
+        process.stderr.write(error instanceof OnePasswordError
+          ? `${error.message}\n`
+          : "Login assistance stopped. Continue in the visible browser. No credential details were logged.\n");
+      }
+      if (abort.signal.aborted) { process.exitCode = 2; return; }
+      if (await finishIfReady()) return;
+    }
     process.stdout.write(
-      `Amazon browser session is ready. Session generation: ${runtime.sessionGeneration}.\n`,
+      [
+        `Dedicated Amazon profile: ${profileDir}`,
+        "Complete sign-in, MFA, or any challenge directly in the visible Amazon window.",
+        "Credentials are never printed or written to files; cookies remain in this dedicated profile.",
+        "The session is checked automatically. Press Enter to check immediately, or Ctrl-C to close safely.",
+      ].join("\n") + "\n",
     );
+    checkTimer = setInterval(() => {
+      if (checking || completed || abort.signal.aborted) return;
+      checking = finishIfReady().then((ready) => { if (ready) input.close(); })
+        .catch(() => { stop(); })
+        .finally(() => { checking = undefined; });
+    }, 2_000);
+    for await (const _line of lines) {
+      if (checking) await checking;
+      if (completed || await finishIfReady()) return;
+      process.stdout.write("Login remains incomplete. Finish sign-in in the visible browser; it will close automatically when the session is verified.\n");
+    }
+    if (!completed) process.exitCode = 2;
+  } finally {
+    if (checkTimer) clearInterval(checkTimer);
+    if (checking) await checking;
+    abort.abort();
+    input.close();
+    process.stdin.pause();
     await runtime.close();
+    process.removeListener("SIGINT", stop);
+    process.removeListener("SIGTERM", stop);
+    process.removeListener("SIGHUP", stop);
   }
 }
 

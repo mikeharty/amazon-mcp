@@ -22,7 +22,7 @@ if (config.liveEnabled && account.enabled) {
   );
   const instance = createAmazonWebProvider({
     profileDir: config.profileDir,
-    headless: false,
+    headless: config.browserHeadless,
     initialSessionGeneration: row.rows[0].session_generation,
     onSessionGeneration: async (generation) => {
       await store.pool.query(

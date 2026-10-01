@@ -1,6 +1,6 @@
 {
   "name": "amazon-shopping-mcp",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,13 +11,17 @@
     "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "verify": "pnpm typecheck && pnpm test && pnpm build",
+    "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm test:browser:built",
+    "test:browser:built": "node scripts/browser-build-smoke.mjs",
     "dev": "node --env-file=.env --import tsx apps/gateway/main.ts",
-    "worker": "node --env-file=.env --import tsx apps/worker/main.ts",
+    "worker": "pnpm run build && node --env-file=.env dist/apps/worker/main.js",
     "migrate": "node --env-file=.env --import tsx scripts/migrate.ts",
-    "browser:login": "node --env-file=.env --import tsx scripts/browser-login.ts",
+    "browser:login": "pnpm run build && node --env-file=.env dist/scripts/browser-login.js",
+    "browser:login:1password": "pnpm run build && node --env-file=.env dist/scripts/browser-login.js --1password",
     "local:init": "tsx scripts/setup.ts",
-    "mcp:smoke": "node --env-file=.env --import tsx scripts/mcp-smoke.ts"
+    "local:doctor": "node --env-file=.env --import tsx scripts/doctor.ts",
+    "mcp:smoke": "node --env-file=.env --import tsx scripts/mcp-smoke.ts",
+    "amazon:smoke": "node --env-file=.env --import tsx scripts/amazon-read-smoke.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
@@ -34,5 +38,6 @@
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vitest": "5.0.1"
-  }
+  },
+  "license": "UNLICENSED"
 }

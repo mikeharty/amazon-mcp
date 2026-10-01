@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Exact synthetic notification redaction sentinel; never a credential"
+condition = "AND"
+paths = ['''(^|/)tests/notifications\.test\.ts$''']
+regexTarget = "secret"
+regexes = ['''^private-order-123$''']

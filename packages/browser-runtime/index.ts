@@ -10,6 +10,8 @@ import {
 import { hostname } from "node:os";
 import { dirname, resolve } from "node:path";
 import { chromium, type BrowserContext, type Page } from "playwright";
+import type { LoginCredentials } from "../core/onepassword.js";
+import { assistAmazonPasswordLogin, type PasswordLoginResult } from "./password-login.js";
 
 export type ChallengeKind =
   "signin" | "mfa" | "captcha" | "robot_check" | "payment" | "unknown";
@@ -107,7 +109,15 @@ export class PersistentBrowserRuntime {
       this.context = await chromium.launchPersistentContext(
         resolve(this.options.profileDir),
         {
+          // Use the same full Chromium build for visible login and background
+          // operation, including Chromium's modern headless mode.
+          channel: "chromium",
           headless: this.options.headless ?? true,
+          // Callers own graceful shutdown and lock release. Playwright's
+          // default SIGINT handler exits the process before their finally runs.
+          handleSIGINT: false,
+          handleSIGTERM: false,
+          handleSIGHUP: false,
           viewport: { width: 1440, height: 1000 },
           userAgent: this.options.userAgent ?? "Agent/AmazonShoppingMCP",
           acceptDownloads: false,
@@ -205,6 +215,22 @@ export class PersistentBrowserRuntime {
       await this.options.onSessionGeneration?.(this.generation);
       this.paused = false;
       return state;
+    });
+  }
+
+  // Local login entrypoint only; not exposed by the worker or any MCP tool.
+  // Keeps normal automation fenced while the explicit login helper runs.
+  async assistPasswordLogin(
+    expectedGeneration: number,
+    readCredentials: () => Promise<LoginCredentials>,
+  ): Promise<PasswordLoginResult> {
+    return this.enqueueControl(async () => {
+      if (!this.page || !this.paused)
+        throw new BrowserRuntimeError("no_handoff", "No user handoff is active");
+      if (expectedGeneration !== this.generation)
+        throw new BrowserRuntimeError("stale_generation", "Browser session generation changed");
+      if (await isVerifiedAuthenticatedAmazonPage(this.page)) return "manual";
+      return assistAmazonPasswordLogin(this.page, readCredentials);
     });
   }
 
@@ -374,7 +400,9 @@ export async function classifyPage(page: Page): Promise<PageState> {
   return { kind: "ready", url };
 }
 
-async function isVerifiedAuthenticatedAmazonPage(page: Page): Promise<boolean> {
+export async function isVerifiedAuthenticatedAmazonPage(
+  page: Page,
+): Promise<boolean> {
   let url: URL;
   try {
     url = new URL(page.url());
@@ -386,16 +414,18 @@ async function isVerifiedAuthenticatedAmazonPage(page: Page): Promise<boolean> {
     !(url.hostname === "amazon.com" || url.hostname.endsWith(".amazon.com"))
   )
     return false;
+  const accountGreeting = page
+    .locator(
+      "#nav-link-accountList-nav-line-1, #nav-link-accountList .nav-line-1",
+    )
+    .first();
+  if (!(await accountGreeting.isVisible())) return false;
   const greeting = (
-    await page
-      .locator(
-        "#nav-link-accountList-nav-line-1, #nav-link-accountList .nav-line-1",
-      )
-      .first()
-      .textContent()
-      .catch(() => "")
+    await accountGreeting.textContent().catch(() => "")
   )?.trim();
-  return Boolean(greeting && !/sign\s*in/i.test(greeting));
+  return Boolean(
+    greeting && /^hello,\s*\S/i.test(greeting) && !/sign\s*in/i.test(greeting),
+  );
 }
 
 async function ensureDedicatedProfile(profileDir: string): Promise<void> {

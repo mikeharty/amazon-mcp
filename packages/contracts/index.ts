@@ -16,6 +16,7 @@ export type Result<T = unknown> = {
     source: string;
     contextRef: string;
     deliveryContextRef?: string;
+    authentication?: "verified";
   };
   coverage?: { complete: boolean; missing: string[]; reason?: string };
   nextCursor?: string;

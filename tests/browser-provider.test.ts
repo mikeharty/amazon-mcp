@@ -159,6 +159,7 @@ describe("Amazon web provider synthetic fixture E2E", () => {
   it("extracts cart, order, shipment, subscription, and exact checkout terms", async () => {
     const cart = await provider.read("cart_get", {}, ctx);
     expect(cart.status).toBe("ok");
+    expect(cart.observation?.authentication).toBe("verified");
     expect((cart.data as any).lines[0]).toMatchObject({
       lineRef: "cart-line-1",
       quantity: 1,
@@ -224,6 +225,44 @@ describe("Amazon web provider synthetic fixture E2E", () => {
       error: { code: "invalid_input" },
     });
   });
+
+  it.each(["missing", "signed_out", "hidden", "generic"])(
+    "requires user sign-in for account reads with a %s account greeting",
+    async (state) => {
+      const signedOut = await browser.newContext();
+      try {
+        const tab = await signedOut.newPage();
+        const greeting =
+          state === "missing"
+            ? ""
+            : `<span id="nav-link-accountList-nav-line-1"${state === "hidden" ? ' style="display:none"' : ""}>${
+                state === "signed_out"
+                  ? "Hello, sign in"
+                  : state === "generic"
+                    ? "Account & Lists"
+                    : "Hello, Fixture"
+              }</span>`;
+        await signedOut.route("**/*", (route) =>
+          route.fulfill({
+            contentType: "text/html",
+            body: `<title>Amazon</title>${greeting}<main id="sc-active-cart"></main><main id="ordersContainer"></main><main id="subscriptions-container"></main>`,
+          }),
+        );
+        const reader = new AmazonWebProvider({
+          run: (fn) => fn(tab),
+          close: async () => {},
+        });
+        for (const kind of ["cart_get", "orders_list", "subscriptions_list"]) {
+          const result = await reader.read(kind, {}, ctx);
+          expect(result.status).toBe("requires_user_action");
+          expect(result.observation?.authentication).toBeUndefined();
+          expect(result.data).toBeUndefined();
+        }
+      } finally {
+        await signedOut.close();
+      }
+    },
+  );
 
   it("rejects stale cart revisions and wrong sellers", async () => {
     const stale = await provider.mutate(
@@ -307,7 +346,9 @@ describe("Amazon web provider synthetic fixture E2E", () => {
       expect(snapshot, variant.name).toMatchObject({
         status: "partial",
         coverage: {
-          missing: expect.arrayContaining(["required:cart_line_identity"]),
+          missing: expect.arrayContaining([
+            ["seller", "mode"].includes(variant.name) ? "cart_mutation_evidence" : "required:cart_line_identity",
+          ]),
         },
       });
       const result = await incompleteProvider.mutate(
@@ -329,6 +370,49 @@ describe("Amazon web provider synthetic fixture E2E", () => {
       await incompleteContext.close();
     }
   });
+
+  it("reads an empty active cart and saved quantities without inventing purchase evidence or waiting for a subtotal", async () => {
+    const local = await browser.newContext();
+    try {
+      const tab = await local.newPage();
+      const body = await readFile(join(fixtures, "cart-saved.html"), "utf8");
+      await local.route("**/*", (route) => route.fulfill({ contentType: "text/html", body }));
+      const reader = new AmazonWebProvider({ run: (fn) => fn(tab), close: async () => {} });
+      const result = await reader.read("cart_get", {}, ctx);
+      expect(result).toMatchObject({ status: "partial", coverage: { missing: ["cart_mutation_evidence"] },
+        data: { recognized: true, activeCartEmpty: true, lines: [{ lineRef: "saved-fixture-1", asin: "B0FIXTURE1", quantity: 2, location: "saved" }] } });
+      expect((result.data as any).lines[0].purchaseMode).toBeUndefined();
+      expect((result.data as any).lines[0].sellerId).toBeUndefined();
+      expect((result.data as any).subtotal).toBeUndefined();
+      const mutation = await reader.mutate("cart_move", { lineRef: "saved-fixture-1", expectedRevision: (result.data as any).revision, destination: "restore" }, ctx);
+      expect(mutation).toMatchObject({ status: "unsupported", error: { code: "cart_line_evidence_incomplete" } });
+      expect(await tab.evaluate(() => (window as any).__effects ?? 0)).toBe(0);
+    } finally { await local.close(); }
+  });
+
+  it.each(["valid", "foreign_destination", "missing_title", "empty", "recommendations_only"])(
+    "recognizes modern subscription inventory conservatively: %s", async (variant) => {
+      const local = await browser.newContext();
+      try {
+        const tab = await local.newPage();
+        let body = await readFile(join(fixtures, "subscriptions-modern.html"), "utf8");
+        if (variant === "foreign_destination") body = body.replace('data-edit-url="/', 'data-edit-url="https://example.com/');
+        if (variant === "missing_title") body = body.replace("Synthetic subscription product", "");
+        if (variant === "empty") body = '<span id="nav-link-accountList-nav-line-1">Hello, Fixture</span><div id="subscriptionsDesktopGridLayout">You do not have any subscriptions</div>';
+        if (variant === "recommendations_only") body = '<span id="nav-link-accountList-nav-line-1">Hello, Fixture</span><aside><h2>Recommended product</h2><button class="snsSubscribeButton">Subscribe</button></aside>';
+        await local.route("**/*", (route) => route.fulfill({ contentType: "text/html", body }));
+        const reader = new AmazonWebProvider({ run: (fn) => fn(tab), close: async () => {} });
+        const result = await reader.read("subscriptions_list", {}, ctx);
+        if (variant === "valid") {
+          expect(result).toMatchObject({ status: "partial", data: { recognized: true, unparsedCount: 0, subscriptions: [{ subscriptionRef: "fixture-sub-1", asin: "B0FIXTURE1", title: "Synthetic subscription product", frequency: "every 4 months", quantity: 2, nextDate: "October 19" }] } });
+          expect((result.data as any).subscriptions).toHaveLength(1);
+        } else {
+          expect(result.data).toMatchObject({ recognized: variant === "empty", subscriptions: [] });
+          if (variant !== "empty") expect(result.coverage?.missing).toContain("required:subscriptions_marker");
+        }
+      } finally { await local.close(); }
+    },
+  );
 
   it("refuses cart add when matching baseline quantity is not observed", async () => {
     let productRequests = 0;

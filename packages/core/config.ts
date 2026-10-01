@@ -7,6 +7,7 @@ export type Config = {
   ownerId: string;
   port: number;
   profileDir: string;
+  browserHeadless: boolean;
   liveEnabled: boolean;
   retainObservations: boolean;
   keepaKey?: string;
@@ -31,6 +32,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const port = Number(env.PORT ?? 3433);
   if (!Number.isInteger(port) || port < 1024 || port > 65535)
     throw new Error("Invalid PORT");
+  const headless = env.AMAZON_HEADLESS ?? "true";
+  if (headless !== "true" && headless !== "false")
+    throw new Error("AMAZON_HEADLESS must be true or false");
   const keepaCalls = Number(env.KEEPA_MAX_CALLS ?? 100),
     keepaTokens = Number(env.KEEPA_MAX_TOKENS ?? 100);
   if (
@@ -54,6 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ownerId: env.OWNER_ID ?? "local-owner",
     port,
     profileDir: resolveAmazonProfileDir(env),
+    browserHeadless: headless === "true",
     liveEnabled: env.AMAZON_LIVE_ENABLED === "true",
     retainObservations: env.RETAIN_OBSERVATIONS === "true",
   };

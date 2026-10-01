@@ -54,6 +54,7 @@ export type GatewayOptions = Readonly<{
   allowedHosts?: readonly string[];
   maxRequestBytes?: number;
   serverInfo?: Readonly<{ name: string; version: string }>;
+  instructions?: string;
 }>;
 
 export function createGateway(
@@ -135,9 +136,10 @@ export function createGateway(
         {
           serverInfo: options.serverInfo ?? {
             name: "amazon-shopping-mcp",
-            version: "0.1.0",
+            version: "0.1.0-alpha",
           },
           maxSubscriptions: 0,
+          instructions: options.instructions,
         },
       );
 
