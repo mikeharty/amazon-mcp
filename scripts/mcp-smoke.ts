@@ -3,7 +3,7 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 const client = new Client(
-  { name: "amazon-mcp-smoke", version: "0.1.0-alpha" },
+  { name: "amazon-mcp-smoke", version: "0.1.0-alpha.1" },
   { versionNegotiation: { mode: "auto" } },
 );
 const transport = new StreamableHTTPClientTransport(

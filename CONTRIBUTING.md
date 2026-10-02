@@ -1,8 +1,8 @@
 # Contributing during private review
 
 Start with the [README](README.md) and [capability ledger](docs/capabilities.md).
-This repository is currently private and all rights are reserved; access for
-review does not grant an open-source license.
+The project uses the [MIT License](LICENSE). The repository is currently private
+for review; licensing does not change repository visibility.
 
 Use Node 22.18+, 24.x, or 26+ and pnpm 10.32.1. Install from the committed lockfile,
 install Playwright Chromium, and start the local Postgres service as documented.

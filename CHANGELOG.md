@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-alpha.1 — 2026-10-01
+
+- Adopt the MIT License and update package metadata and review documentation.
+- Keep the repository private and npm publication disabled.
+- No runtime behavior changes; version identifiers now report `0.1.0-alpha.1`.
+
 ## 0.1.0-alpha — 2026-10-01
 
 Initial private review release of an unofficial local Amazon.com MCP server for
@@ -22,5 +28,6 @@ one personal account.
   plus CI and secret scanning. No account credentials are needed for CI.
 
 This is a private source release, not an npm package or hosted service. The
-software is experimental, unaffiliated with Amazon, and all rights are reserved
-pending a licensing decision. See [review notes](docs/RELEASE_REVIEW.md).
+software is experimental and unaffiliated with Amazon. This initial archive used
+all-rights-reserved terms; `0.1.0-alpha.1` supersedes it with the MIT License. See
+[review notes](docs/RELEASE_REVIEW.md).

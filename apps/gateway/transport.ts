@@ -136,7 +136,7 @@ export function createGateway(
         {
           serverInfo: options.serverInfo ?? {
             name: "amazon-shopping-mcp",
-            version: "0.1.0-alpha",
+            version: "0.1.0-alpha.1",
           },
           maxSubscriptions: 0,
           instructions: options.instructions,

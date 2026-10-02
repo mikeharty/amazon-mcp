@@ -1,6 +1,6 @@
 # Capability ledger
 
-Updated 2026-09-30. This is the implementation ledger; the original tool catalogue and workstreams describe a larger target. **Implemented** means runnable code; **fixture verified** means deterministic synthetic/provider tests; neither means Amazon permits access or the current account layout works.
+Updated 2026-10-01. This is the implementation ledger; the original tool catalogue and workstreams describe a larger target. **Implemented** means runnable code; **fixture verified** means deterministic synthetic/provider tests; neither means Amazon permits access or the current account layout works.
 
 | Area | Implemented surface | Evidence and remaining gap |
 | --- | --- | --- |
@@ -20,7 +20,7 @@ Updated 2026-09-30. This is the implementation ledger; the original tool catalog
 | Reviews/feedback | Visible review/feedback extraction; exact user-text draft helper | Does not generate a claimed purchase experience or submit/publish/contact anyone; `content_draft` returns supplied text and an owner handoff, with eligibility explicitly unverified |
 | Price history | Opt-in own observations; optional disabled Keepa history/seller provider | Encrypted retained-data tests verify restart continuity and owner isolation; source/session/delivery provenance stays attached to individual points, with unverified contexts never treated as one quote. Keepa response fixtures; no backfill without dataset, no paid API call performed, no Creators adapter |
 | Monitoring | Product/offer/order/shipment/subscription observation jobs; USD product-price threshold crossings; persisted baseline; occurrence-aware inbox; ack/pause/delete | Real database/queue tests; incomplete required fields suppress observations. Optional macOS desktop adapter and durable delivery outbox tested with fake delivery; actual OS display unverified. No return/refund watch, Web Push/email or guaranteed closed-client wakeup |
-| Packaging | Local install/config/migrations/build/run scripts, Docker Compose Postgres, SDK smoke, bounded account-read verification with optional order-to-tracking checks and private redacted reports | Live authenticated MCP/Graphile five-read batch completed for cart, first-page orders, subscriptions, order detail and shipments. Worker/login commands run compiled JavaScript; compiled Chromium fixtures supplement unit/integration tests. No remote deployment, push or remote repository created |
+| Packaging | Local install/config/migrations/build/run scripts, Docker Compose Postgres, SDK smoke, bounded account-read verification with optional order-to-tracking checks and private redacted reports | Live authenticated MCP/Graphile five-read batch completed for cart, first-page orders, subscriptions, order detail and shipments. Worker/login commands run compiled JavaScript; compiled Chromium fixtures supplement unit/integration tests. Private GitHub repository published; CI passed on Linux with Node 22, 24 and 26, Postgres 17, compiled Chromium fixtures, fresh setup/MCP discovery and secret scanning. Source uses the MIT License starting with alpha.1. No hosted service or npm package |
 
 ## Transaction and privacy boundaries
 

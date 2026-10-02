@@ -1,6 +1,6 @@
 # Private alpha review
 
-Review target: `v0.1.0-alpha`, prepared October 1, 2026 (America/Los_Angeles).
+Review target: `v0.1.0-alpha.1`, prepared October 1, 2026 (America/Los_Angeles).
 
 ## Local release verification
 
@@ -65,10 +65,11 @@ raw Amazon pages, or private diagnostic reports to the repository.
 
 ## Distribution
 
-The repository is private for owner review. `package.json` remains `private: true`
-and uses `UNLICENSED`; the root LICENSE reserves all rights. Choose an explicit
-license before inviting open-source use. A public release or hosted deployment
-requires a separate decision; this release does not expose a service.
+The repository is private for owner review and the source is licensed under MIT.
+`package.json` uses `license: "MIT"` and remains `private: true` to prevent
+accidental npm publication. The MIT license begins with `v0.1.0-alpha.1`; the
+original alpha archive predates this change. A public repository or hosted
+deployment requires a separate decision; this release does not expose a service.
 
 The Actions workflow runs on pushes and pull requests with read-only repository
 permissions. It covers Node 22, 24, and 26 with Postgres 17 and local Chromium

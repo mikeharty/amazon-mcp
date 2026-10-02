@@ -4,7 +4,7 @@ A local TypeScript MCP gateway, durable Postgres/Graphile worker, and dedicated 
 
 The gateway and durable core run locally. Authenticated headless MCP reads have returned the cart, paginated order history, order details, split-shipment tracking and subscription inventory from the configured personal account. The 1Password helper has submitted a password successfully and reached Amazon's authenticator step. Cart writes remain fixture-verified. Live browsing, retained product history and paid Keepa are disabled by default. No live purchases, returns, cancellations or subscription changes were performed.
 
-**Private alpha (`v0.1.0-alpha`).** Unofficial and unaffiliated with Amazon. Intended for local personal use; page compatibility may change. All rights are reserved pending a licensing decision. Start with the [release review guide](docs/RELEASE_REVIEW.md), [changelog](CHANGELOG.md), and [security notes](SECURITY.md).
+**Private alpha (`v0.1.0-alpha.1`).** Unofficial and unaffiliated with Amazon. Intended for local personal use; page compatibility may change. Licensed under the [MIT License](LICENSE); the repository remains private for review. Start with the [release review guide](docs/RELEASE_REVIEW.md), [changelog](CHANGELOG.md), and [security notes](SECURITY.md).
 
 ## Run locally
 
