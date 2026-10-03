@@ -371,7 +371,7 @@ describe.skipIf(!connection)("Postgres durable operations", () => {
     const observe = (price: number) =>
       m.observe(w, {
         status: "ok",
-        data: { price: { currency: "USD", minorUnits: price } },
+        data: { asin: "B000000001", price: { currency: "USD", minorUnits: price } },
       });
     expect(await observe(120)).toBe(false);
     expect(await observe(100)).toBe(true);
@@ -391,6 +391,20 @@ describe.skipIf(!connection)("Postgres durable operations", () => {
         { currency: "USD", minorUnits: 90 },
       ),
     ).rejects.toThrow("another rule");
+  });
+  it("alerts once on the first valid low price and preserves the baseline across invalid observations", async () => {
+    const a = await store.account("first-price"); const m = new Monitoring(store);
+    const watch = await m.create("first-price", a.id, "products_get", { asin: "B000000001" }, 300, undefined, "first-price-key", { currency: "USD", minorUnits: 100, notifyOnFirstMatch: true });
+    const observe = (asin: string, price?: number) => m.observe(watch, { status: "partial", data: { asin, price: price === undefined ? undefined : { currency: "USD", minorUnits: price } } });
+    expect(await observe("B000000001")).toBe(false);
+    expect(await observe("B000000002",90)).toBe(false);
+    expect(await observe("B000000001",90)).toBe(true);
+    expect(await observe("B000000001",80)).toBe(false);
+    expect(await observe("B000000001")).toBe(false);
+    expect(await observe("B000000001",80)).toBe(false);
+    expect(await observe("B000000001",110)).toBe(false);
+    expect(await observe("B000000001",100)).toBe(true);
+    expect((await m.events("first-price")).items).toHaveLength(2);
   });
   it("migrates generation-keyed legacy product history without inventing verified provenance", async () => {
     const account = await store.account("legacy-history");

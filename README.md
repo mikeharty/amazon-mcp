@@ -4,26 +4,36 @@ A local TypeScript MCP gateway, durable Postgres/Graphile worker, and dedicated 
 
 The gateway and durable core run locally. Authenticated headless MCP reads have returned the cart, paginated order history, order details, split-shipment tracking and subscription inventory from the configured personal account. The 1Password helper has submitted a password successfully and reached Amazon's authenticator step. Cart writes remain fixture-verified. Live browsing, retained product history and paid Keepa are disabled by default. No live purchases, returns, cancellations or subscription changes were performed.
 
-**Private alpha (`v0.1.0-alpha.1`).** Unofficial and unaffiliated with Amazon. Intended for local personal use; page compatibility may change. Licensed under the [MIT License](LICENSE); the repository remains private for review. Start with the [release review guide](docs/RELEASE_REVIEW.md), [changelog](CHANGELOG.md), and [security notes](SECURITY.md).
+**Private alpha (`v0.2.0-alpha`).** Unofficial and unaffiliated with Amazon. Intended for local personal use; page compatibility may change. Licensed under the [MIT License](LICENSE); the repository remains private for review. Start with the [release review guide](docs/RELEASE_REVIEW.md), [changelog](CHANGELOG.md), and [security notes](SECURITY.md).
+
+## New shopping workflows
+
+Create USD price alerts with `price_alert_create`, display observed product images with `product_image_get`, and compare two to five products with `products_research`. Research fetches current observations and returns a transparent preference-weighted ranking with source excerpts and unknowns. `orders_search` searches bounded pages of the current history view; `orders_export` returns CSV/JSON and coverage metadata. These features do not establish exhaustive history, all-in prices, or verified product compatibility. See [examples and limits](docs/SHOPPING_WORKFLOWS.md).
+
+The server exposes 38 tools in the default Amazon read-only mode, or 42 with cart writes explicitly enabled. Read-only mode permits local alerts while blocking Amazon mutations in both gateway and worker.
 
 ## Run locally
 
 Requires Node 22.18+, 24.x or 26+ (tested with 26.0.0), pnpm 10.32.1, Docker or a reachable Postgres 17 database. If pnpm is absent, replace `pnpm` below with `npx pnpm@10.32.1`.
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm exec playwright install chromium
-pnpm run local:init
-docker compose up -d postgres
-pnpm run migrate
-pnpm run dev
+pnpm run local:setup
+pnpm run local:start
 ```
 
-In a second terminal:
+Setup installs locked dependencies and Chromium, creates private secrets if needed, starts the local Postgres service, builds/migrates, and generates a private client configuration. Use `--no-docker` with a preconfigured external database. The foreground start command waits for gateway and worker readiness; Ctrl-C stops both. A child exit stops its companion. No existing services or browser locks are taken over.
+
+For first sign-in or session recovery, stop existing services and run:
 
 ```sh
-pnpm run worker
+pnpm run local:start --login
+# Or use the optional 1Password helper:
+pnpm run local:start --1password
 ```
+
+After sign-in, enable `AMAZON_LIVE_ENABLED=true` in `.env` and restart. `AMAZON_READ_ONLY=true` is the default: live account reads and local alerts work, but Amazon cart mutations are unavailable. Enabling the existing cart adapters requires an explicit `AMAZON_READ_ONLY=false` in both gateway and worker; live cart writes remain unverified.
+
+For manual operation, the individual `local:init`, `migrate`, `dev`, `worker`, and `browser:login` commands remain available. [Workflow documentation](docs/SHOPPING_WORKFLOWS.md) includes client setup and recovery details.
 
 `local:init` generates independent random secrets into a private, ignored `.env`; it preserves an existing file. Use that exact script name; `pnpm setup` is pnpm's own shell setup command. The default database listens only on `127.0.0.1:55432`. Its development password is unsuitable for remote deployment.
 
@@ -118,7 +128,8 @@ Watches observe configured product/offer/order/shipment/subscription reads at in
 
 ```sh
 TEST_DATABASE_URL=postgres://amazon_mcp:local-development-only@127.0.0.1:55432/amazon_mcp pnpm run verify
-pnpm audit
+pnpm run test:startup
+pnpm audit --prod
 ```
 
 Database tests create and drop isolated temporary databases on that server, so the test role needs database-creation privileges. Without `TEST_DATABASE_URL`, those tests are explicitly skipped. Browser tests use synthetic fixtures in temporary profiles. Tests never buy, return, cancel or subscribe on Amazon.

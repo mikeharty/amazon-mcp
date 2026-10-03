@@ -31,6 +31,7 @@ describe.skipIf(!connection)(
         retainObservations: false,
         origin: "http://127.0.0.1",
         writeSchemas: cartWriteSchemas,
+        fetchImage: async () => ({ type: "image", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=" }),
       });
       server = serve(
         createGateway({
@@ -39,7 +40,7 @@ describe.skipIf(!connection)(
             r.headers.get("authorization") === "Bearer fixture-token"
               ? {
                   id: "fixture-owner",
-                  scopes: ["account:read", "catalog:read", "cart:write"],
+                  scopes: ["account:read", "catalog:read", "cart:write", "watches:write"],
                 }
               : undefined,
         }),
@@ -66,6 +67,52 @@ describe.skipIf(!connection)(
       await store?.close();
       await admin?.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
       await admin?.end();
+    });
+    it("runs history search through the durable executor and exports only the owner's result", async () => {
+      const account = await store.account("fixture-owner");
+      const call = await client.callTool({ name: "orders_search", arguments: { accountRef: account.id, query: "mug", maxPages: 2 } });
+      const id = (call.structuredContent as {operationId:string}).operationId;
+      const executor = new Executor(store, {
+        read: async () => ({ status: "partial", data: { recognized:true, orders:[{ orderId:"111-2222222-3333333", date:"October 1, 2026",total:{currency:"USD",minorUnits:2500}, lines:[{asin:"B000000001",title:"Fixture mug"}] }],pagination:{currentPage:1,hasNextPage:false} },observation:{source:"amazon-web",observedAt:new Date().toISOString(),contextRef:account.id,authentication:"verified"} }),
+        mutate: async () => { throw new Error("No writes"); }, close: async () => {},
+      },"search-worker");
+      await executor.run(id);
+      const output = await client.callTool({name:"orders_export",arguments:{operationId:id,format:"csv"}});
+      expect(output.structuredContent).toMatchObject({status:"partial",data:{mimeType:"text/csv",text:expect.stringContaining("Fixture mug"),coverage:{complete:false}}});
+      const other = await store.account("foreign-export");
+      const foreign = await store.start("foreign-export",other.id,"orders_search","read",{},randomUUID());
+      const denied=await client.callTool({name:"orders_export",arguments:{operationId:foreign.id}});
+      expect(denied.isError).toBe(true);
+    });
+    it("returns an MCP image from verified owner observations and creates one idempotent price alert", async () => {
+      const account = await store.account("fixture-owner");
+      const op = await store.start("fixture-owner",account.id,"products_get","read",{asin:"B000000001"},randomUUID());
+      const claimed = await store.claim(op.id,"image-worker");
+      await store.finish(claimed!,"image-worker",{status:"partial",data:{asin:"B000000001",media:[{kind:"image",url:"https://m.media-amazon.com/images/I/fixture.png"}]}});
+      const response=await client.callTool({name:"product_image_get",arguments:{operationId:op.id,index:0}});
+      expect(response.isError).not.toBe(true);
+      expect(response.content).toEqual(expect.arrayContaining([expect.objectContaining({type:"image",mimeType:"image/png"})]));
+      const research=await store.start("fixture-owner",account.id,"products_research","read",{asins:["B000000001","B000000002"]},randomUUID());
+      const researchClaimed=await store.claim(research.id,"research-image-worker");
+      await store.finish(researchClaimed!,"research-image-worker",{status:"partial",data:{items:[{asin:"B000000002",media:[{kind:"image",url:"https://m.media-amazon.com/images/I/fixture.png"}]}]}});
+      expect((await client.callTool({name:"product_image_get",arguments:{operationId:research.id,asin:"B000000002"}})).content).toEqual(expect.arrayContaining([expect.objectContaining({type:"image"})]));
+      expect((await client.callTool({name:"product_image_get",arguments:{operationId:research.id,asin:"B000000003"}})).isError).toBe(true);
+      const args={accountRef:account.id,asin:"B000000001",targetMinorUnits:2500,idempotencyKey:"registry-price-alert"};
+      const first=await client.callTool({name:"price_alert_create",arguments:args});
+      const again=await client.callTool({name:"price_alert_create",arguments:args});
+      const id=(first.structuredContent as {data:{watch:{id:string}}}).data.watch.id;
+      expect(again.structuredContent).toMatchObject({status:"ok",data:{watch:{id,priceThreshold:{notifyOnFirstMatch:true}}}});
+      const conflict=await client.callTool({name:"price_alert_create",arguments:{...args,targetMinorUnits:2000}});
+      expect(conflict.isError).toBe(true);
+    });
+    it("blocks even previously queued writes in worker read-only mode", async () => {
+      const account = await store.account("read-only-worker");
+      const op=await store.start("read-only-worker",account.id,"cart_remove","write",{},randomUUID());
+      let mutations=0;
+      const executor=new Executor(store,{read:async()=>({status:"ok"}),mutate:async()=>{mutations++;return {status:"ok"};},close:async()=>{}},"read-only-worker",false,false,true);
+      await executor.run(op.id);
+      expect(mutations).toBe(0);
+      expect((await store.getOperation("read-only-worker",op.id)).result).toMatchObject({status:"failed",error:{code:"AMAZON_READ_ONLY"}});
     });
     it("discovers complete typed registry, queues an owner read, and returns its worker result", async () => {
       const tools = (await client.listTools()).tools;
@@ -156,7 +203,7 @@ describe.skipIf(!connection)(
       expect(
         (
           await store.pool.query(
-            "SELECT count(*) FROM operations WHERE mode='write'",
+            "SELECT count(*) FROM operations WHERE mode='write' AND owner_id='fixture-owner'",
           )
         ).rows[0].count,
       ).toBe("0");
@@ -233,7 +280,7 @@ describe.skipIf(!connection)(
       expect(
         (
           await store.pool.query(
-            "SELECT count(*) FROM operations WHERE mode <> 'read'",
+            "SELECT count(*) FROM operations WHERE mode <> 'read' AND owner_id='fixture-owner'",
           )
         ).rows[0].count,
       ).toBe("0");

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0-alpha — 2026-10-02
+
+- Add guided setup, private client configuration, and supervised foreground startup with sign-in recovery.
+- Default to Amazon read-only mode, enforced at both gateway and worker.
+- Add bounded order search, observed order-total summaries, and CSV/JSON export with coverage.
+- Add preference-weighted product research and native MCP product-image content.
+- Add a simple price-alert tool with first-match notification and duplicate suppression.
+- Keep all new workflows explicit about incomplete observations; no new Amazon mutations, paid AI calls, or external notification integrations.
+
 ## 0.1.0-alpha.1 — 2026-10-01
 
 - Adopt the MIT License and update package metadata and review documentation.

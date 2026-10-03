@@ -88,7 +88,7 @@ export class OperationQueries {
     if (!row.worker_online) issues.push({ code: "worker_offline", action: "Start the worker with pnpm run worker. If its profile is owned, inspect the existing process; never delete a live ownership lock." });
     if (row.stale_active) issues.push({ code: "stale_operations", action: "Inspect active operations and worker health. A stale heartbeat does not establish whether an external effect occurred." });
     if (row.queue_delayed) issues.push({ code: "queue_delayed", action: "Inspect queued operations and the active browser handoff before submitting more work." });
-    if (recent.operations[0]?.status === "requires_user_action") issues.push({ code: "recent_handoff", action: "Inspect the latest operation. For a sign-in challenge, stop the worker, complete browser:login, then restart it." });
+    if (recent.operations[0]?.status === "requires_user_action") issues.push({ code: "recent_handoff", action: "Inspect the latest operation. For a sign-in challenge, stop local:start with Ctrl-C and run pnpm run local:start --login. With manually started processes, stop the worker, complete browser:login, then restart it." });
     return {
       sampledAt: row.sampled_at.toISOString(),
       readiness: issues.length ? "needs_attention" : "available",

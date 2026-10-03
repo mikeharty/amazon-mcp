@@ -1,3 +1,4 @@
+import { searchOrders, researchProducts } from "../dist/packages/core/shopping-workflows.js";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -52,6 +53,24 @@ try {
     assert.equal(result.data.shipments.length, 2);
     if (kind === "shipments_get") assert.equal(result.data.shipments[0].tracking.status, "Shipped");
   }
+  const productHtml = await readFile(new URL("../tests/fixtures/product.html", import.meta.url), "utf8");
+  const historyHtml = await readFile(new URL("../tests/fixtures/orders-modern.html", import.meta.url), "utf8");
+  await runtime.run(async (page) => {
+    await page.route("**/*", (route) => {
+      const url = new URL(route.request().url());
+      const body = url.pathname.includes("order-history") ? historyHtml :
+        url.pathname.includes("B0FIXTURE2") ? productHtml.replaceAll("B0FIXTURE1", "B0FIXTURE2").replace("$24.50", "$34.50") : productHtml;
+      return route.fulfill({ contentType: "text/html", body });
+    });
+  });
+  const context = { ownerId: "fixture-owner", accountRef: "fixture-account", marketplace: "amazon.com", sessionGeneration: runtime.sessionGeneration };
+  const researched = await researchProducts(provider, { asins: ["B0FIXTURE1", "B0FIXTURE2"], desiredFeatures: ["BPA free"] }, context);
+  assert.equal(researched.data.items.length, 2);
+  assert.equal(researched.data.recommendedAsin, "B0FIXTURE1");
+  assert.ok(researched.data.items[0].media.length > 0);
+  const searched = await searchOrders(provider, { query: "mug", maxPages: 1 }, context);
+  assert.equal(searched.data.orders.length, 1);
+  assert.equal(searched.data.nextPage, 2);
   await runtime.run(async (page) => {
     let submissions = 0;
     await page.route("**/*", (route) => {
@@ -71,7 +90,7 @@ try {
     assert.equal(submissions, 1);
     assert.deepEqual(credentials, { username: "", password: "" });
   });
-  console.log("Compiled Chromium fixtures: 8 account reads and 1 password flow passed.");
+  console.log("Compiled Chromium fixtures: 8 account reads, 1 password flow and 2 shopping workflows passed.");
 } finally {
   await runtime.close();
   await rm(root, { recursive: true, force: true });

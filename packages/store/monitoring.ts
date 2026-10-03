@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { DomainError, type Result } from "../contracts/index.js";
 import { Store } from "./index.js";
 import { digest } from "./crypto.js";
-export type PriceThreshold = { currency: "USD"; minorUnits: number };
+export type PriceThreshold = { currency: "USD"; minorUnits: number; notifyOnFirstMatch?: boolean };
 export type Watch = {
   id: string;
   owner_id: string;
@@ -209,13 +209,16 @@ export class Monitoring {
             watch.owner_id,
           )
         : undefined;
+      if (threshold) {
+        const value = state as { asin?: unknown; price?: { currency?: unknown; minorUnits?: unknown } };
+        if (value?.asin !== watch.input.asin || value.price?.currency !== "USD" || !Number.isSafeInteger(value.price.minorUnits) || Number(value.price.minorUnits) < 0) return false;
+      }
       const prior = current.last_value
         ? this.store.vault.open(current.last_value, watch.owner_id)
         : undefined;
       const changed =
-        current.last_digest !== null &&
         current.last_digest !== hash &&
-        (!threshold || crossesPriceThreshold(prior, state, threshold));
+        (threshold ? crossesPriceThreshold(prior, state, threshold) : current.last_digest !== null);
       if (changed) {
         const eventId = randomUUID();
         await c.query(
@@ -379,9 +382,8 @@ function crossesPriceThreshold(
   const before = price(previous),
     after = price(current);
   return (
-    before !== undefined &&
+    (before !== undefined ? before > threshold.minorUnits : previous === undefined && threshold.notifyOnFirstMatch === true) &&
     after !== undefined &&
-    before > threshold.minorUnits &&
     after <= threshold.minorUnits
   );
 }

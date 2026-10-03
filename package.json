@@ -1,6 +1,6 @@
 {
   "name": "amazon-shopping-mcp",
-  "version": "0.1.0-alpha.1",
+  "version": "0.2.0-alpha",
   "private": true,
   "type": "module",
   "engines": {
@@ -21,7 +21,11 @@
     "local:init": "tsx scripts/setup.ts",
     "local:doctor": "node --env-file=.env --import tsx scripts/doctor.ts",
     "mcp:smoke": "node --env-file=.env --import tsx scripts/mcp-smoke.ts",
-    "amazon:smoke": "node --env-file=.env --import tsx scripts/amazon-read-smoke.ts"
+    "amazon:smoke": "node --env-file=.env --import tsx scripts/amazon-read-smoke.ts",
+    "local:setup": "node scripts/local-setup.mjs",
+    "local:start": "pnpm run build && node --env-file=.env scripts/local-start.mjs",
+    "client:config": "node --env-file=.env --import tsx scripts/client-config.ts",
+    "test:startup": "node scripts/local-start-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",

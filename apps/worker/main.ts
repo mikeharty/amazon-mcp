@@ -55,6 +55,7 @@ const executor = new Executor(
   id,
   config.retainObservations,
   config.desktopNotifications,
+  config.amazonReadOnly,
 );
 const monitoring = new Monitoring(store);
 const notifications = new NotificationOutbox(
@@ -117,6 +118,7 @@ timer.unref();
 console.log(
   `Persistent worker running; Amazon live access ${config.liveEnabled ? "enabled" : "disabled"}; notifications use the durable event inbox.`,
 );
+process.send?.({ type: "ready" });
 let stopping = false;
 const stop = async () => {
   if (stopping) return;

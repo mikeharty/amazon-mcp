@@ -1,3 +1,5 @@
+import { orderSearchInput, researchInput, exportOrders } from "../../packages/core/shopping-workflows.js";
+import { fetchProductImage } from "../../packages/core/product-images.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/server";
@@ -34,6 +36,8 @@ const resultSchema = z
   })
   .passthrough();
 export const readSchemas: Record<string, z.ZodType> = {
+  orders_search: z.object({ ...account, ...orderSearchInput.shape }).strict().refine((i) => !i.dateFrom || !i.dateTo || i.dateFrom <= i.dateTo, "dateFrom must precede dateTo"),
+  products_research: z.object({ ...account, ...researchInput.shape }).strict().refine((i) => new Set(i.asins).size === i.asins.length && i.weights.price + i.weights.rating + (i.desiredFeatures.length ? i.weights.features : 0) > 0, "Use distinct ASINs and applicable positive weights"),
   products_search: z
     .object({ ...account, query: z.string().min(1).max(200), ...pagination })
     .strict(),
@@ -138,6 +142,7 @@ export function createRegistry(
     writeSchemas?: Record<string, z.ZodType>;
     keepa?: KeepaProvider;
     desktopNotifications?: boolean;
+    fetchImage?: typeof fetchProductImage;
   },
 ) {
   const monitoring = new Monitoring(store);
@@ -162,6 +167,7 @@ export function createRegistry(
         idempotentHint: readOnly,
         openWorldHint: ![
           "products_compare",
+          "orders_export",
           "operations_get",
           "operations_list",
           "amazon_diagnostics",
@@ -221,7 +227,7 @@ export function createRegistry(
           creatorsEnabled: false,
           keepaEnabled: options.keepa?.enabled ?? false,
           retainsObservations: options.retainObservations,
-          readTools: options.readKinds ?? Object.keys(readSchemas),
+          readTools: [...new Set([...(options.readKinds ?? Object.keys(readSchemas)), "orders_search", "products_research"])],
           writeTools: Object.keys(options.writeSchemas ?? {}),
           consequentialActions:
             "not exposed; internal proposal validation only",
@@ -235,7 +241,7 @@ export function createRegistry(
       };
     },
   );
-  for (const kind of options.readKinds ?? Object.keys(readSchemas)) {
+  for (const kind of [...new Set([...(options.readKinds ?? Object.keys(readSchemas)), "orders_search", "products_research"])]) {
     const schema = readSchemas[kind];
     if (!schema) throw new Error(`No input schema for ${kind}`);
     add(
@@ -494,6 +500,45 @@ export function createRegistry(
       },
     }),
   );
+  add("orders_export", "Export a completed owner-scoped orders_search result as CSV or JSON. Includes coverage; totals are whole-order observations, not net spending. CSV cells are escaped against spreadsheet formulas.",
+    z.object({ operationId: z.uuid(), format: z.enum(["csv", "json"]).default("csv") }).strict(), "account:read", true,
+    async (input, owner) => {
+      const op = await store.getOperation(owner.id, String(input.operationId));
+      if (op.kind !== "orders_search" || !["ok", "partial", "requires_user_action"].includes(op.status)) throw new DomainError("INVALID_ORDER_RESULT", "Use a finished orders_search operation", 400);
+      return { status: "partial", data: exportOrders(op.result?.data, input.format as "csv" | "json") };
+    });
+  tools.push({
+    name: "product_image_get", description: "Display one product image from an owner-scoped products_get or product_media_list or products_research operation (pass asin for research). Returns an MCP image block plus source link. Client image display varies; no arbitrary URLs, browser cookies or authenticated pages are fetched.",
+    inputSchema: z.object({ operationId: z.uuid(), asin: asin.optional(), index: z.number().int().min(0).max(19).default(0) }).strict(),
+    outputSchema: resultSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    handler: async (input, ctx) => {
+      try {
+        if (!ctx.owner.scopes.includes("catalog:read")) throw new DomainError("FORBIDDEN", "Catalog access required", 403);
+        const args = input as { operationId: string; asin?: string; index: number };
+        const op = await store.getOperation(ctx.owner.id, args.operationId);
+        if (!["products_get","product_media_list","products_research"].includes(op.kind) || !["ok","partial"].includes(op.status)) throw new DomainError("INVALID_IMAGE_SOURCE", "Read product media first", 400);
+        const source = op.kind === "products_research" ? z.object({ items: z.array(z.object({ asin }).passthrough()) }).parse(op.result?.data).items.find((p) => p.asin === args.asin) : op.result?.data;
+        const data = z.object({ asin, media: z.array(z.object({ kind: z.string(), url: z.string(), alt: z.string().optional() })) }).parse(source);
+        if ((op.kind === "products_research" ? !Array.isArray(op.input.asins) || !op.input.asins.includes(data.asin) : data.asin !== op.input.asin || (args.asin !== undefined && args.asin !== data.asin)) || op.result?.coverage?.missing.some((m) => m.startsWith("required:"))) throw new DomainError("INVALID_IMAGE_SOURCE", "Product identity must be verified", 400);
+        const selected = data.media.filter((m) => m.kind === "image")[args.index];
+        if (!selected) throw new DomainError("NOT_FOUND", "Image index not available", 404);
+        const image = await (options.fetchImage ?? fetchProductImage)(selected.url);
+        const result = content({ status: "ok", data: { asin: data.asin, sourceUrl: selected.url, alt: selected.alt, observedAt: op.result?.observation?.observedAt } });
+        return { ...result, content: [...result.content, image] };
+      } catch (e) { return content({ status: "failed", error: { code: e instanceof DomainError ? e.code : "IMAGE_UNAVAILABLE", retryable: false } }); }
+    },
+  });
+  add("price_alert_create", "Create an idempotent USD product-price alert. By default the first valid observation notifies if already at/below target; later notifications require a new downward crossing. Uses the durable inbox and optional desktop notices, not purchases. The worker must remain awake.",
+    z.object({ ...account, asin, targetMinorUnits: z.number().int().nonnegative().max(100_000_000), cadenceSeconds: z.number().int().min(300).max(604800).default(900),
+      notifyIfAlreadyBelow: z.boolean().default(true), expiresAt: z.iso.datetime().optional(), idempotencyKey }).strict(), "watches:write", false,
+    async (i,o) => {
+      await store.getAccount(o.id, String(i.accountRef));
+      if (!options.liveEnabled) return { status: "requires_user_action", data: { instructions: "Enable dedicated browser access and start the worker before creating an alert." } };
+      const watch = await monitoring.create(o.id, String(i.accountRef), "products_get", { asin: i.asin }, Number(i.cadenceSeconds), i.expiresAt as string | undefined,
+        String(i.idempotencyKey), { currency: "USD", minorUnits: Number(i.targetMinorUnits), notifyOnFirstMatch: Boolean(i.notifyIfAlreadyBelow) });
+      return { status: "ok", data: { watch, channels: options.desktopNotifications ? ["event-inbox","macos-desktop"] : ["event-inbox"], priceBasis: "Observed item price; excludes unverified shipping, tax, coupons and seller conditions." } };
+    });
   add(
     "prices_history",
     "Read retained own product observations across account runtime restarts, with per-point source/session/delivery provenance. These are historical observations, never one merged quote. No pre-install backfill; only populated when permitted retention is enabled.",

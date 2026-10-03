@@ -1,6 +1,6 @@
 # Capability ledger
 
-Updated 2026-10-01. This is the implementation ledger; the original tool catalogue and workstreams describe a larger target. **Implemented** means runnable code; **fixture verified** means deterministic synthetic/provider tests; neither means Amazon permits access or the current account layout works.
+Updated 2026-10-02. This is the implementation ledger; the original tool catalogue and workstreams describe a larger target. **Implemented** means runnable code; **fixture verified** means deterministic synthetic/provider tests; neither means Amazon permits access or the current account layout works.
 
 | Area | Implemented surface | Evidence and remaining gap |
 | --- | --- | --- |
@@ -22,6 +22,16 @@ Updated 2026-10-01. This is the implementation ledger; the original tool catalog
 | Monitoring | Product/offer/order/shipment/subscription observation jobs; USD product-price threshold crossings; persisted baseline; occurrence-aware inbox; ack/pause/delete | Real database/queue tests; incomplete required fields suppress observations. Optional macOS desktop adapter and durable delivery outbox tested with fake delivery; actual OS display unverified. No return/refund watch, Web Push/email or guaranteed closed-client wakeup |
 | Packaging | Local install/config/migrations/build/run scripts, Docker Compose Postgres, SDK smoke, bounded account-read verification with optional order-to-tracking checks and private redacted reports | Live authenticated MCP/Graphile five-read batch completed for cart, first-page orders, subscriptions, order detail and shipments. Worker/login commands run compiled JavaScript; compiled Chromium fixtures supplement unit/integration tests. Private GitHub repository published; CI passed on Linux with Node 22, 24 and 26, Postgres 17, compiled Chromium fixtures, fresh setup/MCP discovery and secret scanning. Source uses the MIT License starting with alpha.1. No hosted service or npm package |
 
+## New in 0.2.0-alpha
+
+- `price_alert_create`: idempotent USD item-price alerts, optional first-valid-observation match, downward-crossing notifications, existing watch management and inbox delivery. Unknown/wrong-product prices do not overwrite a baseline. No alert has been created against a real account by release verification.
+- `products_research`: sequential observed reads for two to five exact ASINs, budget filtering, weighted price/rating/feature-text ranking, excerpts, specifications, media, timestamps and explicit unknowns. No paid model or claims of semantic compatibility; missing weighted values prevent ranking.
+- `product_image_get`: owner-scoped observed image retrieval as native MCP image content, constrained CDN hosts, formats, bytes, timeout and no redirects/cookies. SDK content verified; target desktop rendering remains client-dependent.
+- `orders_search` / `orders_export`: bounded sequential current-view history search, deduplication, date/text filtering, observed whole-order totals and safe CSV/JSON text with coverage. Not exhaustive lifetime history or net spending; invoices remain unsupported.
+- `local:setup`, `local:start`, `client:config`: guided setup, generated private HTTP client configuration, foreground gateway/worker supervision and login-before-start recovery. Read-only Amazon mode defaults on and also blocks queued writes. No OS background service or automatic wakeup.
+
+See [shopping workflows](SHOPPING_WORKFLOWS.md) for examples and evidence boundaries. The default surface is 38 tools, or 42 with cart mutations enabled.
+
 ## Transaction and privacy boundaries
 
 - The application exposes cart mutations only. It does not expose checkout submission, cancellation, return or subscription commit tools.
@@ -34,4 +44,4 @@ Updated 2026-10-01. This is the implementation ledger; the original tool catalog
 
 ## Evidence
 
-See [implementation status](IMPLEMENTATION.md), [transport evidence](evidence/transport.md), and [browser evidence](evidence/browser.md). Latest verification passed 147 tests in 17 files, typecheck/build, and nine compiled Chromium fixture checks (eight account reads and one password flow). It covers credential handling, headless session retention, graceful interrupt cleanup, modern account layouts, exact order/package identity, bounded tracking navigation, durable polling, operational diagnostics and protected history pagination. The earlier live five-read batch completed in approximately twelve seconds with both tracking pages verified; exhaustive source coverage and cart mutation support are not established. Prior dependency audits and live observations remain separately dated evidence, never inferred from synthetic fixtures.
+See [implementation status](IMPLEMENTATION.md), [transport evidence](evidence/transport.md), and [browser evidence](evidence/browser.md). The preceding alpha passed 147 tests in 17 files and nine compiled Chromium checks. Current release verification is recorded in the release review guide. It covers credential handling, headless session retention, graceful interrupt cleanup, modern account layouts, exact order/package identity, bounded tracking navigation, durable polling, operational diagnostics and protected history pagination. The earlier live five-read batch completed in approximately twelve seconds with both tracking pages verified; exhaustive source coverage and cart mutation support are not established. Prior dependency audits and live observations remain separately dated evidence, never inferred from synthetic fixtures.

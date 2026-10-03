@@ -1,8 +1,28 @@
 # Private alpha review
 
-Review target: `v0.1.0-alpha.1`, prepared October 1, 2026 (America/Los_Angeles).
+Review target: `v0.2.0-alpha`, prepared October 2, 2026 (America/Los_Angeles).
 
-## Local release verification
+## Version 0.2.0 local verification
+
+On October 2, 2026 (PDT), the new setup command passed from a fresh source copy:
+locked installation, Chromium setup, private environment generation, build,
+isolated migration, and private client-config generation. The external-database
+`--no-docker` path was used; the existing local Postgres container was not changed.
+
+The supervised-start check observed gateway and worker readiness, discovery of
+38 tools with Amazon read-only mode enabled, rejection of a duplicate launch,
+and clean SIGTERM shutdown of both services with heartbeat and port cleanup.
+The SDK tests cover image content blocks, owner-scoped exports, idempotent alert
+creation, and refusal to dispatch queued Amazon writes in read-only mode.
+
+Verification includes 172 tests in 19 files with Postgres enabled, eleven compiled
+Chromium checks (eight account reads, one password flow, two shopping workflows),
+and the separate startup check. These checks use synthetic data and isolated
+databases. They do not establish live alert delivery, new live account coverage,
+or image rendering in every client. The existing Amazon worker was left running
+on its prior loaded code; restart deliberately to use the new release.
+
+## Previous alpha verification
 
 On October 1, a clean source copy with no existing dependencies, build output, or
 environment file passed installation from the frozen lockfile on Node 26.0.0,

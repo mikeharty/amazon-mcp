@@ -9,6 +9,7 @@ export type Config = {
   profileDir: string;
   browserHeadless: boolean;
   liveEnabled: boolean;
+  amazonReadOnly: boolean;
   retainObservations: boolean;
   keepaKey?: string;
   keepaCalls: number;
@@ -60,6 +61,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     profileDir: resolveAmazonProfileDir(env),
     browserHeadless: headless === "true",
     liveEnabled: env.AMAZON_LIVE_ENABLED === "true",
+    amazonReadOnly: env.AMAZON_READ_ONLY !== "false",
     retainObservations: env.RETAIN_OBSERVATIONS === "true",
   };
 }

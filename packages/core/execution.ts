@@ -5,6 +5,7 @@ import {
   productHistorySubject,
   productObservationProvenance,
 } from "./observations.js";
+import { searchOrders, researchProducts } from "./shopping-workflows.js";
 import { digest } from "../store/crypto.js";
 export class Executor {
   constructor(
@@ -13,10 +14,15 @@ export class Executor {
     readonly workerId: string,
     readonly retainObservations = false,
     readonly desktopNotifications = false,
+    readonly amazonReadOnly = false,
   ) {}
   async run(id: string): Promise<void> {
     const op = await this.store.claim(id, this.workerId);
     if (!op) return;
+    if (this.amazonReadOnly && op.mode !== "read") {
+      await this.store.finish(op, this.workerId, { status: "failed", error: { code: "AMAZON_READ_ONLY", retryable: false } });
+      return;
+    }
     let dispatched = false;
     try {
       const account = await this.store.getAccount(op.owner_id, op.account_id);
@@ -28,7 +34,9 @@ export class Executor {
       };
       let result: Result;
       if (op.mode === "read")
-        result = await this.provider.read(op.kind, op.input, ctx);
+        result = op.kind === "orders_search" ? await searchOrders(this.provider, op.input, ctx)
+          : op.kind === "products_research" ? await researchProducts(this.provider, op.input, ctx)
+          : await this.provider.read(op.kind, op.input, ctx);
       else {
         if (op.mode === "commit") {
           const intent = await this.store.getIntent(op.owner_id, op.intent_id!);

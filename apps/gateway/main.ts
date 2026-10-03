@@ -18,7 +18,7 @@ const registry = createRegistry(store, {
   origin,
   desktopNotifications: config.desktopNotifications,
   readKinds: [...AMAZON_WEB_READ_KINDS],
-  writeSchemas: cartWriteSchemas,
+  writeSchemas: config.amazonReadOnly ? {} : cartWriteSchemas,
   keepa: createKeepaProvider({
     apiKey: config.keepaKey,
     maxCallsPerSession: config.keepaCalls,
@@ -35,7 +35,7 @@ const gateway = createGateway({
             "catalog:read",
             "account:read",
             "account:write",
-            "cart:write",
+            ...(config.amazonReadOnly ? [] : ["cart:write"]),
             "checkout:prepare",
             "checkout:commit",
             "orders:write",
@@ -61,6 +61,7 @@ const server = serve(async (request) => {
     });
   return new Response("Not found", { status: 404 });
 }, config.port);
+server.once("listening", () => process.send?.({ type: "ready" }));
 console.log(
   `Local MCP: ${origin}/mcp; owner control: ${origin}/owner. Amazon live access: ${config.liveEnabled ? "enabled" : "disabled"}.`,
 );
