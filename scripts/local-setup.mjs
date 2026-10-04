@@ -15,7 +15,10 @@ function run(command, args) {
     process.exit(1);
   }
 }
-const packageCommand = (...args) => run(process.execPath, [pnpm, ...args]);
+// Older pnpm installs expose a JS entry point; standalone installs expose a binary.
+const packageCommand = /\.[cm]?js$/i.test(pnpm)
+  ? (...args) => run(process.execPath, [pnpm, ...args])
+  : (...args) => run(pnpm, args);
 packageCommand("install", "--frozen-lockfile");
 packageCommand(
   "exec",
