@@ -1,8 +1,11 @@
 import { afterAll, beforeAll, describe, it, expect } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
+import { once } from "node:events";
+import { chromium, type Browser } from "playwright";
 import pg from "pg";
 import { Store } from "../packages/store/index.js";
 import { createOwnerUi } from "../apps/gateway/owner-ui.js";
+import { serve } from "../apps/gateway/server.js";
 const connection = process.env.TEST_DATABASE_URL;
 describe.skipIf(!connection)("Owner review authorization", () => {
   let store: Store, admin: pg.Pool;
@@ -20,6 +23,61 @@ describe.skipIf(!connection)("Owner review authorization", () => {
     await admin?.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
     await admin?.end();
   });
+  it("allows browser form login and exact-intent approval with same-origin checks", async () => {
+    const token = randomBytes(32).toString("hex");
+    const config = { ownerId: "browser-owner", ownerToken: token, origin: "" };
+    const ui = createOwnerUi(store, config);
+    const server = serve(ui, 0);
+    let browser: Browser | undefined;
+    try {
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("Missing test port");
+      config.origin = `http://127.0.0.1:${address.port}`;
+      const account = await store.account(config.ownerId);
+      const intent = await store.prepare(
+        config.ownerId, account.id, "fixture_purchase", {
+          title: "Browser approval fixture",
+          total: { currency: "USD", minorUnits: 1000 },
+        },
+      );
+      browser = await chromium.launch();
+      const page = await browser.newPage();
+      await page.goto(config.origin + "/owner");
+      await page.getByLabel("Owner token").fill(token);
+      const [login] = await Promise.all([
+        page.waitForResponse((response) =>
+          response.url().endsWith("/owner/login"),
+        ),
+        page.getByRole("button", { name: "Sign in" }).click(),
+      ]);
+      expect(await login.request().headerValue("origin")).toBe(config.origin);
+      expect(login.status()).toBe(303);
+      await page.waitForURL(config.origin + "/owner");
+      expect(await page.getByRole("heading", {
+        name: "Amazon MCP owner control",
+      }).count()).toBe(1);
+      const path = `/owner/intents/${intent.id}`;
+      await page.goto(config.origin + path);
+      const [approval] = await Promise.all([
+        page.waitForResponse((response) =>
+          response.url() === config.origin + path &&
+          response.request().method() === "POST",
+        ),
+        page.getByRole("button", { name: "Approve these exact terms once" }).click(),
+      ]);
+      expect(await approval.request().headerValue("origin")).toBe(config.origin);
+      expect(approval.status()).toBe(200);
+      expect((await store.getIntent(config.ownerId, intent.id)).approved_at)
+        .not.toBeNull();
+    } finally {
+      await browser?.close();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => error ? reject(error) : resolve()),
+      );
+    }
+  }, 15000);
   it("requires separate owner login and CSRF, escapes untrusted terms, and consumes approval once", async () => {
     const origin = "http://127.0.0.1:3433";
     const token = randomBytes(32).toString("hex");
@@ -57,6 +115,12 @@ describe.skipIf(!connection)("Owner review authorization", () => {
       (await post("/owner/login", { token }, undefined, "https://evil.example"))
         .status,
     ).toBe(403);
+    expect((await post("/owner/login", { token }, undefined, "null")).status)
+      .toBe(403);
+    expect((await ui(new Request(origin + "/owner/login", {
+      method: "POST",
+      body: new URLSearchParams({ token }),
+    }))).status).toBe(403);
     const login = await post("/owner/login", { token });
     const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
     expect(cookie).toContain("owner_session=");

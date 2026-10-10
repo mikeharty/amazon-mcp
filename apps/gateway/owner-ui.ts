@@ -24,7 +24,8 @@ function html(
       "cache-control": "no-store",
       "content-security-policy":
         "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-      "referrer-policy": "no-referrer",
+      // Browser form POSTs need a same-origin Origin header for verification.
+      "referrer-policy": "same-origin",
       "x-content-type-options": "nosniff",
       ...extra,
     },
